@@ -861,6 +861,164 @@ fn main() -> i32:
 """,
         "1" + chr(10),
     ),
+    (
+        "borrow-nested-scopes",
+        """
+struct P:
+    x: i64
+    s: String
+
+fn main() -> i32:
+    let p = P { x: 1, s: "p" }
+    if true:
+        let r = &p.x
+        print(*r)
+    for i in 0..1:
+        let r = &p.x
+        print(*r)
+    let q = p
+    print(q.x)
+    return 0
+""",
+        "1" + chr(10) + "1" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "borrow-branches-and-loops",
+        """
+struct P:
+    x: i64
+
+fn main() -> i32:
+    let p = P { x: 3 }
+    let r = &p.x
+    if true:
+        print(*r)
+    else:
+        print(*r)
+    for i in 0..2:
+        print(*r)
+    return 0
+""",
+        "3" + chr(10) + "3" + chr(10) + "3" + chr(10),
+    ),
+    (
+        "supertrait-multi-bounds",
+        """
+trait A:
+    fn a(&self) -> String
+trait B:
+    fn b(&self) -> String
+trait C: A, B:
+    fn c(&self) -> String:
+        return self.a() + self.b()
+
+struct P:
+    n: String
+impl A for P:
+    fn a(&self) -> String:
+        return "A" + self.n.clone()
+impl B for P:
+    fn b(&self) -> String:
+        return "B" + self.n.clone()
+impl C for P:
+    pass
+
+fn both<T: A + B>(x: &T) -> String:
+    return x.a() + x.b()
+
+fn main() -> i32:
+    let p = P { n: "!" }
+    print(both(&p))
+    let d: &dyn C = &p
+    print(d.c())
+    let boxed: Box<dyn C> = box(P { n: "?" })
+    print(boxed.c())
+    return 0
+""",
+        "A!B!" + chr(10) + "A!B!" + chr(10) + "A?B?" + chr(10),
+    ),
+    (
+        "trait-default-override",
+        """
+trait A:
+    fn who(&self) -> String:
+        return "A"
+trait B: A:
+    fn who(&self) -> String:
+        return "B"
+struct P:
+    x: i64
+impl A for P:
+    pass
+impl B for P:
+    pass
+fn main() -> i32:
+    let p = P { x: 1 }
+    let a: &dyn A = &p
+    let b: &dyn B = &p
+    let c: Box<dyn B> = box(P { x: 2 })
+    print(a.who())
+    print(b.who())
+    print(c.who())
+    return 0
+""",
+        "A" + chr(10) + "B" + chr(10) + "B" + chr(10),
+    ),
+    (
+        "trait-object-destruction",
+        """
+trait Show:
+    fn show(&self) -> String
+struct H:
+    r: Rc<i64>
+impl Show for H:
+    fn show(&self) -> String:
+        return "h"
+fn main() -> i32:
+    let r = rc(7)
+    let d: Box<dyn Show> = box(H { r: r.clone() })
+    print(r.strong_count())
+    drop(d)
+    print(r.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "trait-nested-object",
+        """
+trait Show:
+    fn show(&self) -> String
+struct P:
+    n: String
+impl Show for P:
+    fn show(&self) -> String:
+        return self.n.clone()
+fn main() -> i32:
+    let d: Box<dyn Show> = box(P { n: "nested" })
+    let r = &d
+    print(r.show())
+    let rr = &r
+    print((*rr).show())
+    return 0
+""",
+        "nested" + chr(10) + "nested" + chr(10),
+    ),
+    (
+        "rc-drop-count",
+        """
+struct H:
+    r: Rc<i64>
+fn main() -> i32:
+    let r = rc(7)
+    let h = H { r: r.clone() }
+    print(r.strong_count())
+    drop(h)
+    print(r.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "1" + chr(10),
+    ),
 ]
 
 FAIL_CASES = [
@@ -1258,6 +1416,258 @@ fn main() -> i32:
 """,
         "borrow error",
         "use of moved value",
+    ),
+    (
+        "view-multiple-sources",
+        """
+struct View:
+    r: &i64
+fn bad(a: &i64, b: &i64) -> View:
+    return View { r: b }
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "reference parameters",
+    ),
+    (
+        "view-temporary",
+        """
+struct P:
+    x: i64
+struct View:
+    r: &i64
+fn bad(x: &i64) -> View:
+    return View { r: &P { x: 1 }.x }
+fn main() -> i32:
+    return 0
+""",
+        "borrow error",
+        "returned borrow must be derived",
+    ),
+    (
+        "drop-owner-with-view",
+        """
+struct P:
+    x: i64
+    s: String
+struct View:
+    r: &i64
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.x }
+fn main() -> i32:
+    let p = P { x: 1, s: "p" }
+    let v = p.view()
+    drop(p)
+    print(*v.r)
+    return 0
+""",
+        "borrow error",
+        "cannot move `p` while it is borrowed",
+    ),
+    (
+        "move-owner-with-view",
+        """
+struct P:
+    x: i64
+    s: String
+struct View:
+    r: &i64
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.x }
+fn main() -> i32:
+    let p = P { x: 1, s: "p" }
+    let v = p.view()
+    let q = p
+    print(*v.r)
+    return 0
+""",
+        "borrow error",
+        "cannot move `p` while it is borrowed",
+    ),
+    (
+        "mutable-then-shared",
+        """
+struct P:
+    x: i64
+fn main() -> i32:
+    var p = P { x: 1 }
+    let a = &mut p.x
+    let b = &p.x
+    print(*b)
+    return 0
+""",
+        "borrow error",
+        "cannot read `p` while it is mutably borrowed",
+    ),
+    (
+        "shared-then-mutable",
+        """
+struct P:
+    x: i64
+fn main() -> i32:
+    var p = P { x: 1 }
+    let a = &p.x
+    let b = &mut p.x
+    print(*b)
+    return 0
+""",
+        "borrow error",
+        "cannot borrow `p` as mutable while it is already borrowed",
+    ),
+    (
+        "branch-mutate-view",
+        """
+struct P:
+    x: i64
+    s: String
+struct View:
+    r: &i64
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.x }
+fn main() -> i32:
+    var p = P { x: 1, s: "p" }
+    let v = p.view()
+    if true:
+        p.x = 2
+    print(*v.r)
+    return 0
+""",
+        "borrow error",
+        "cannot assign through `p` while it is borrowed",
+    ),
+    (
+        "loop-mutate-view",
+        """
+struct P:
+    x: i64
+    s: String
+struct View:
+    r: &i64
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.x }
+fn main() -> i32:
+    var p = P { x: 1, s: "p" }
+    let v = p.view()
+    var i = 0
+    while i < 1:
+        p.x = 2
+        i += 1
+    print(*v.r)
+    return 0
+""",
+        "borrow error",
+        "cannot assign through `p` while it is borrowed",
+    ),
+    (
+        "nested-view-escape",
+        """
+struct P:
+    x: i64
+    s: String
+struct View:
+    r: &i64
+fn main() -> i32:
+    var p = P { x: 1, s: "p" }
+    var v = View { r: &p.x }
+    if true:
+        let q = P { x: 2, s: "q" }
+        v = View { r: &q.x }
+    print(*v.r)
+    return 0
+""",
+        "borrow error",
+        "cannot assign to a place that stores a reference yet",
+    ),
+    (
+        "ambiguous-supertrait-method",
+        """
+trait A:
+    fn f(&self) -> i64
+trait B:
+    fn f(&self) -> i64
+trait C: A, B:
+    fn c(&self) -> i64
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "inherits ambiguous method",
+    ),
+    (
+        "trait-method-collision",
+        """
+trait A:
+    fn f(&self) -> i64
+trait B:
+    fn f(&self) -> i64
+struct P:
+    x: i64
+impl A for P:
+    fn f(&self) -> i64:
+        return 1
+impl B for P:
+    fn f(&self) -> i64:
+        return 2
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "defined twice",
+    ),
+    (
+        "duplicate-trait-impl",
+        """
+trait Show:
+    fn show(&self) -> String
+struct P:
+    x: i64
+impl Show for P:
+    fn show(&self) -> String:
+        return "a"
+impl Show for P:
+    fn show(&self) -> String:
+        return "b"
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "already implements",
+    ),
+    (
+        "dyn-by-value",
+        """
+trait Show:
+    fn show(&self) -> String
+struct Bad:
+    d: dyn Show
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "stores a trait object by value",
+    ),
+    (
+        "trait-object-wrong-mutability",
+        """
+trait Show:
+    fn show(&self) -> String
+struct P:
+    x: i64
+impl Show for P:
+    fn show(&self) -> String:
+        return "p"
+fn main() -> i32:
+    let p = P { x: 1 }
+    let d: &mut dyn Show = &p
+    return 0
+""",
+        "type error",
+        "mismatched reference mutability",
     ),
 ]
 

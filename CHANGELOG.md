@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.0 — safety and trait-system hardening
+
+### Safety fixes
+
+- A shared `let` borrow now conflicts with a live mutable borrow:
+  `let a = &mut p.x; let b = &p.x` is rejected.
+- Moving or dropping a non-`Copy` owner while a returned view is alive is
+  rejected (`cannot move ... while it is borrowed`).
+- Added adversarial coverage for nested scopes, conditional branches, loops,
+  owner destruction, multiple reference sources and returned-view validation.
+
+### Trait-system fixes
+
+- **`Rc<T>` now drops correctly**: strong count is decremented and the
+  allocation is freed at zero. This also fixes owned trait-object destruction
+  of values containing `Rc`.
+- Default methods from different traits no longer share one generated C
+  function; `&dyn`/`Box<dyn>` dispatch to the correct default, including
+  parent/child overrides.
+- Ambiguous methods inherited from multiple supertraits are rejected unless the
+  child declares an override.
+- Bare `dyn Trait` values (fields, parameters, returns) are rejected; use
+  `&dyn Trait`, `&mut dyn Trait` or `Box<dyn Trait>`.
+
+### Tests
+
+- 81 end-to-end tests: 40 run cases, 40 compile-fail cases and one multi-file
+  case. The negative suite covers borrow conflicts, move/use-after-borrow,
+  owner destruction, branches, loops, nested scopes, returned views,
+  trait conflicts, invalid trait-object coercion and trait-object ownership.
+
 ## 0.7.0 — borrowed views, supertraits, owned trait objects
 
 ### Language

@@ -21,13 +21,28 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 60 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
+| Test suite | **Moderate** | 81 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Reference, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.0 added
+
+- Safety hardening: live shared borrows now conflict with a mutable borrow in
+  `let` bindings; owner destruction/moves while a returned view is alive is
+  rejected; nested-scope, branch and loop borrow tests were added.
+- **`Rc<T>` drop is implemented** (it previously never decremented the strong
+  count or freed the allocation). Trait-object destruction now releases
+  captured `Rc` values correctly.
+- Default methods from different traits no longer share one generated C
+  function; parent/child default overrides dispatch correctly through `&dyn`
+  and `Box<dyn>`.
+- Ambiguous inherited trait methods are rejected; bare `dyn Trait` values are
+  rejected with a clear diagnostic.
+- 81/81 end-to-end tests, including 40 negative cases.
 
 ## What 0.7.0 added
 
@@ -108,7 +123,7 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | No visibility, namespacing, separate compilation or package boundaries. | 3–5 weeks |
-| C4 | No fuzzing / formal soundness evidence | The checker is hand-written; 60 tests cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No fuzzing / formal soundness evidence | The checker is hand-written; 81 tests cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 
 ### High

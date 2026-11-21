@@ -768,6 +768,20 @@ static inline void atr_list_{key}_free({cname}* self) {{
 }}
 """)
             return
+        if isinstance(t, TCon) and t.name == "Rc":
+            inner = self.concrete(t.args[0])
+            d = self.ensure_drop(inner)
+            body = (f"        {d}(v->ptr);\n" if d else "")
+            self.drop_defs.append(f"""static void {name}({c}* v) {{
+    if (v->count && --(*v->count) == 0) {{
+{body}        free(v->ptr);
+        free(v->count);
+    }}
+    v->ptr = NULL;
+    v->count = NULL;
+}}
+""")
+            return
         if isinstance(t, TCon) and t.name == "String":
             self.drop_defs.append(f"""static void {name}({c}* v) {{
     atr_string_free(v);

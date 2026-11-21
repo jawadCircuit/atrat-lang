@@ -98,6 +98,7 @@ class Module:
         self.methods: dict[tuple[str, str], FnInfo] = {}
         self.traits: dict[str, TraitInfo] = {}
         self.closures: dict[str, ClosureInfo] = {}
+        self.default_methods: list[FnInfo] = []
         self.variants: dict[str, list[VariantRef]] = {}
         self.program: ast.Program | None = None
         self.warnings: list[str] = []
@@ -274,6 +275,10 @@ def collect(prog: ast.Program) -> Module:
                 # holding one keeps its source borrowed for the whole block and
                 # cannot be returned or rebound.
                 t = ty(fty, gvars, f"struct {d.name}")
+                if _dyn_by_value(m, t):
+                    raise TypeError_(
+                        f"field '{d.name}.{fname}' stores a trait object by value",
+                        d.line, d.col, "use `&dyn Trait`, `&mut dyn Trait` or `Box<dyn Trait>`")
                 fields.append((fname, t))
             m.structs[d.name].fields = fields
         elif isinstance(d, ast.EnumDecl):
@@ -283,6 +288,11 @@ def collect(prog: ast.Program) -> Module:
                 types = []
                 for vt in vtys:
                     t = ty(vt, gvars, f"enum {d.name}")
+                    if _dyn_by_value(m, t):
+                        raise TypeError_(
+                            f"variant '{d.name}.{vname}' stores a trait object by value",
+                            d.line, d.col,
+                            "use `&dyn Trait`, `&mut dyn Trait` or `Box<dyn Trait>`")
                     if _contains_ref(t):
                         raise TypeError_(
                             f"variant '{d.name}.{vname}' stores a reference, which is not "
@@ -433,14 +443,42 @@ def collect(prog: ast.Program) -> Module:
                 for mname, sig in trait.methods.items():
                     if not sig.decl.body:
                         continue
-                    if (owner, mname) in m.methods:
-                        trait.impls[owner].setdefault(mname, m.methods[(owner, mname)])
+                    if mname in provided:
+                        # The impl supplied this method explicitly.
+                        trait.impls[owner][mname] = m.methods[(owner, mname)]
                         continue
                     dinfo = _fn_info(m, copy.deepcopy(sig.decl), ty, owner=owner,
                                      self_mode=sig.self_mode,
                                      impl_generics=impl_generics)
-                    m.methods[(owner, mname)] = dinfo
+                    # Different traits may each provide a default with the same
+                    # method name for the same type. Give each default a unique
+                    # internal function name so their C bodies do not collide.
+                    dinfo.name = f"{mname}__{trait.name}"
                     trait.impls[owner][mname] = dinfo
+                    if (owner, mname) not in m.methods:
+                        m.methods[(owner, mname)] = dinfo
+                    else:
+                        m.default_methods.append(dinfo)
+
+    # A child trait that inherits the same method name from two different
+    # parents is ambiguous unless the child declares its own override.
+    for name, tri in m.traits.items():
+        own = set(tri.methods)
+        seen = {}
+        for parent in tri.supertraits:
+            for owner in m.trait_lineage(parent):
+                for mname in m.traits[owner].methods:
+                    if mname in own:
+                        continue
+                    prev = seen.get(mname)
+                    if prev is not None and prev != owner:
+                        line, col = trait_lines.get(name, (0, 0))
+                        raise TypeError_(
+                            f"trait '{name}' inherits ambiguous method "
+                            f"'{mname}' from '{prev}' and '{owner}'",
+                            line, col,
+                            f"declare '{mname}' in '{name}' to disambiguate")
+                    seen[mname] = owner
     return m
 
 
@@ -527,6 +565,22 @@ def _has_mut_ref(m: Module, t, _seen=None) -> bool:
     return False
 
 
+def _dyn_by_value(m: Module, t) -> bool:
+    """True if `dyn Trait` appears by value (not refs or Box<dyn>)."""
+    t = m.u.resolve_deep(t)
+    if isinstance(t, TCon):
+        if t.name == "dyn":
+            return True
+        if t.name == "Box" and len(t.args) == 1:
+            return False
+        return any(_dyn_by_value(m, a) for a in t.args)
+    if isinstance(t, (TRef, TPtr)):
+        return False
+    if isinstance(t, TFn):
+        return any(_dyn_by_value(m, p) for p in t.params) or _dyn_by_value(m, t.ret)
+    return False
+
+
 def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
              impl_generics=None) -> FnInfo:
     u = m.u
@@ -562,7 +616,15 @@ def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
         if p.mode and p.name != "self":
             pty = TRef(p.mode == "&mut", pty)
         params.append(pty)
+    if any(_dyn_by_value(m, p) for p in params):
+        raise TypeError_(
+            f"function '{d.name}' takes a trait object by value", d.line, d.col,
+            "use `&dyn Trait`, `&mut dyn Trait` or `Box<dyn Trait>`")
     ret = ty(d.ret, body_gvars, f"function {d.name}") if d.ret is not None else UNIT
+    if _dyn_by_value(m, ret):
+        raise TypeError_(
+            f"function '{d.name}' returns a trait object by value", d.line, d.col,
+            "use `Box<dyn Trait>` or a reference")
     borrow_param = None
     borrow_mut = False
     if _has_ref(m, ret):
@@ -2179,7 +2241,8 @@ def always_returns(stmts, ret=None) -> bool:
 
 def check_program(prog: ast.Program) -> Module:
     m = collect(prog)
-    checker_infos = [i for i in (list(m.fns.values()) + list(m.methods.values()))
+    checker_infos = [i for i in (list(m.fns.values()) + list(m.methods.values())
+                                 + list(m.default_methods))
                      if not i.decl.is_extern]
     for info in checker_infos:
         FnChecker(m, info).check()
@@ -2844,6 +2907,8 @@ class BorrowChecker:
                     roots = self.place_roots(init.base, s)
                     if init.mut:
                         self.check_mut_borrow(roots, s)
+                    else:
+                        self.check_read_borrows(roots, s)
                     self.add_borrow(roots, init.mut, s, temp=False)
                 elif isinstance(init, ast.Cast) and isinstance(init.base, ast.Ref):
                     self.use(init)

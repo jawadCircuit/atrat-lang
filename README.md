@@ -85,7 +85,7 @@ point, and the generated C is available with `atrc emit-c`.
 | Modules / packaging / tooling | **Early** |
 | Production readiness | **No** |
 
-There are **60 end-to-end tests** covering successful programs, exact stdout,
+There are **81 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -205,7 +205,7 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **60/60** pass, including trait objects, supertraits, owned
+Currently **81/81** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised
