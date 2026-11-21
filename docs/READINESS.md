@@ -29,6 +29,12 @@ remaining blockers are listed with severity and an honest estimate.
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
 
+## What 0.8.4 added
+
+- Fixed the sanitizer CI harness after it gained lifecycle examples: the
+  `atrc` path constant was missing. No compiler behaviour changed.
+- 103/103 tests still pass.
+
 ## What 0.8.3 added
 
 - Fixed nested enum `match` patterns emitting C that referenced a pattern

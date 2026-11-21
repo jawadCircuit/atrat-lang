@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ATRC = os.path.join(ROOT, "atrc")
 CC = os.environ.get("ATRAT_CC") or shutil.which("gcc") or shutil.which("clang")
 FLAGS = "-fsanitize=address,undefined -fno-omit-frame-pointer -g"
 

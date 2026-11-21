@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.4 — sanitizer harness fix
+
+- Fix `tests/sanitizers.py`, which referenced the `atrc` path without defining
+  it after the lifecycle-example addition. The 0.8.3 compiler and test suite were
+  unaffected; the Linux ASan/UBSan CI job failed in the harness after all 103
+  tests passed.
+- No language or code-generation changes.
+
 ## 0.8.3 — nested destruction and ownership transfer
 
 - Fixed nested enum `match` patterns emitting references to pattern temporaries
