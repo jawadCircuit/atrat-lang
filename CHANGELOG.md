@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 — non-Copy closure captures
+
+- Closures now capture **non-Copy values by moving them into the closure
+  environment**. Inside the closure body the value is accessed through a shared
+  reference, so it can be read, formatted, cloned or passed to `&self` methods,
+  but it cannot be moved out or mutated.
+- The closure owns and drops its captured values. Capturing moves the original
+  binding, so using it afterwards is a compile error.
+- The borrow checker now checks closure bodies, including moves out of captured
+  non-Copy values.
+
+### Tests
+
+- 50 end-to-end tests, including moved captures, repeated closure calls,
+  captured `String`/`List` reads, closure-environment drops and rejection of
+  using a moved capture.
+
 ## 0.5.0 — trait objects, generic impls, references in structs
 
 ### Language

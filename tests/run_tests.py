@@ -655,6 +655,26 @@ fn main() -> i32:
         "A+A" + chr(10) + "B+B" + chr(10),
     ),
     (
+        "closure-non-copy-capture",
+        """
+fn main() -> i32:
+    let s = "hello".clone()
+    let f = || s.len()
+    print(f())
+    print(f())
+
+    let t = "world".clone()
+    let g = || t + "!"
+    print(g())
+
+    var v = [1, 2, 3]
+    let h = || v.len()
+    print(h())
+    return 0
+""",
+        "5" + chr(10) + "5" + chr(10) + "world!" + chr(10) + "3" + chr(10),
+    ),
+    (
         "generic-recursive",
         """
 struct Node<T>:
@@ -984,16 +1004,16 @@ fn main() -> i32:
         "cannot move a non-Copy value out of",
     ),
     (
-        "closure-non-copy-capture",
+        "closure-move-capture",
         """
 fn main() -> i32:
     let s = "hello".clone()
     let f = || s.len()
-    print(f())
+    print(s)
     return 0
 """,
-        "type error",
-        "cannot capture non-Copy",
+        "borrow error",
+        "use of moved value",
     ),
 ]
 

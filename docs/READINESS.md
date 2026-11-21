@@ -21,13 +21,20 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 49 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
+| Test suite | **Moderate** | 50 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Reference, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy, no releases, no deprecation process. |
+
+## What 0.6.0 added
+
+- Non-Copy closure captures: moved into the closure environment, read-only
+  inside the body, and dropped with the closure.
+- Borrow checking of closure bodies, including rejection of moving fields out
+  of captured values.
 
 ## What 0.5.0 added
 

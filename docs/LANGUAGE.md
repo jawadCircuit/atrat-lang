@@ -247,9 +247,21 @@ m = 9
 print(snapshot())     # 1
 ```
 
-The environment is a generated struct. Non-Copy captures (for example a
-`String`) are rejected; capture a shared reference instead. Nested capturing
-closures, capture by `&mut`, and returning closures are not supported yet.
+The environment is a generated struct. Copy captures are copied; non-Copy
+captures are **moved** into the closure and accessed through a shared reference
+inside it:
+
+```atrat
+let text = "hello".clone()
+let measure = || text.len()
+print(measure())    # 5
+# `text` is moved here; using it now is an error.
+```
+
+Inside the closure a non-Copy capture is read-only: it can be formatted, cloned
+or passed to `&self` methods, but cannot be moved out or mutated. Nested
+capturing closures, capture by `&mut`, and returning closures are not supported
+yet.
 
 ### Box and Rc
 

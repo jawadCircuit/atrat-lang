@@ -76,7 +76,7 @@ point, and the generated C is available with `atrc emit-c`.
 | Modules / packaging / tooling | **Early** |
 | Production readiness | **No** |
 
-There are **49 end-to-end tests** covering successful programs, exact stdout,
+There are **50 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -147,9 +147,10 @@ production compiler**. The important current gaps:
   There are no explicit lifetime annotations yet.
 - Modules are a flat namespace: `import` merges declarations, `pub` is parsed
   but visibility is not enforced, and there is no separate compilation.
-- Closures capture Copy values and shared references by value. Non-Copy
-  captures are rejected with a clear diagnostic; capture by reference instead.
-  Nested capturing closures are not supported yet.
+- Closures capture Copy values by value and non-Copy values by move. Inside a
+  closure, non-Copy captures are read-only shared references; they cannot be
+  moved out or mutated. Nested capturing closures and returning closures are
+  not supported yet.
 - `Box<T>` and read-only `Rc<T>` exist; `Arc`, interior mutability and `Mutex` do not.
 - `match` has no guards, ranges or or-patterns yet.
 - `unsafe:` is a block, not a function marker (`unsafe fn` is not implemented).
@@ -192,8 +193,8 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **49/49** pass, including trait objects, generic impls, struct
-references, recursive drops, capturing closures, returned getters,
+Currently **50/50** pass, including trait objects, generic impls, struct
+references, recursive drops, moved closure captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised
 paths.
 

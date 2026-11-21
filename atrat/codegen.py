@@ -656,6 +656,20 @@ static inline void atr_list_{key}_free({cname}* self) {{
         return name
 
     def _gen_drop(self, name, t, c):
+        if isinstance(t, TCon) and t.name in self.m.closures:
+            ci = self.m.closures[t.name]
+            lines = []
+            for cname, ct in ci.captures:
+                ct = self.concrete(ct)
+                if not self.is_copy(ct):
+                    d = self.ensure_drop(ct)
+                    if d:
+                        lines.append(f"    {d}(&v->f_{cname});")
+            body = chr(10).join(lines)
+            self.drop_defs.append(
+                f"static void {name}({c}* v) {{" + chr(10) + body
+                + chr(10) + "}" + chr(10))
+            return
         if isinstance(t, TCon) and t.name == "Box":
             inner = self.concrete(t.args[0])
             d = self.ensure_drop(inner)
@@ -1721,9 +1735,13 @@ static inline void atr_list_{key}_free({cname}* self) {{
         self.current_fn = None
         for cname, cty in e.captures:
             cty = self.concrete(cty)
-            cvar = f"c_{cname}"
-            self.pre.append(f"{self.ctype(cty)} {cvar} = (*_env).f_{cname};")
-            self.var_scopes[-1][cname] = (cvar, cty, False)
+            if self.is_copy(cty):
+                cvar = f"c_{cname}"
+                self.pre.append(f"{self.ctype(cty)} {cvar} = (*_env).f_{cname};")
+                self.var_scopes[-1][cname] = (cvar, cty, False)
+            else:
+                self.var_scopes[-1][cname] = (
+                    f"(&((*_env).f_{cname}))", TRef(False, cty), False)
         for pname, pn, pt, pc in params:
             self.var_scopes[-1][pname] = (pn, pt, not self.is_copy(pt))
             if not self.is_copy(pt):
@@ -1746,12 +1764,14 @@ static inline void atr_list_{key}_free({cname}* self) {{
          self.current_fn) = saved
         tmp = self.temp("clo")
         init = [f"{env_c} {tmp};", f"{tmp}.__fn = {wname};"]
-        for cname, _ in e.captures:
+        for cname, cty in e.captures:
             loc = self.lookup_local(cname)
             if loc is None:
                 raise CodegenError(
                     f"internal: captured name '{cname}' is not a local")
             init.append(f"{tmp}.f_{cname} = {loc[0]};")
+            if not self.is_copy(cty):
+                self.mark_moved(loc[0])
         init.append(tmp + ";")
         return "({ " + " ".join(init) + " })"
 

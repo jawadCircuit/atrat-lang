@@ -873,6 +873,113 @@ class FnChecker:
         e.ty = self.u.resolve(t)
         return e.ty
 
+    def lambda_free_vars(self, body, params):
+        found = []
+
+        def add(name, bound):
+            if name in bound or name in found:
+                return
+            if self.lookup(name) is not None:
+                found.append(name)
+
+        def pattern_names(p, bound):
+            if isinstance(p, ast.PatBind):
+                bound.add(p.name)
+            elif isinstance(p, ast.PatVariant):
+                for a in p.args:
+                    pattern_names(a, bound)
+
+        def expr(e, bound):
+            if isinstance(e, ast.Name):
+                add(e.name, bound)
+            elif isinstance(e, ast.Field):
+                expr(e.base, bound)
+            elif isinstance(e, ast.Index):
+                expr(e.base, bound)
+                expr(e.index, bound)
+            elif isinstance(e, (ast.Deref, ast.Ref, ast.Cast, ast.Try)):
+                expr(e.base, bound)
+            elif isinstance(e, ast.Unary):
+                expr(e.operand, bound)
+            elif isinstance(e, ast.Binary):
+                expr(e.left, bound)
+                expr(e.right, bound)
+            elif isinstance(e, ast.Call):
+                expr(e.callee, bound)
+                for a in e.args:
+                    expr(a, bound)
+            elif isinstance(e, ast.StructLit):
+                for _, v in e.fields:
+                    expr(v, bound)
+            elif isinstance(e, ast.ListLit):
+                for v in e.items:
+                    expr(v, bound)
+            elif isinstance(e, ast.Range):
+                if e.start is not None:
+                    expr(e.start, bound)
+                if e.end is not None:
+                    expr(e.end, bound)
+            elif isinstance(e, ast.StrLit):
+                for seg in e.segs:
+                    if seg.kind == "expr":
+                        expr(seg.parts[0], bound)
+            elif isinstance(e, ast.Match):
+                expr(e.scrutinee, bound)
+                for arm in e.arms:
+                    b = set(bound)
+                    pattern_names(arm.pattern, b)
+                    expr(arm.body, b)
+            elif isinstance(e, ast.BlockExpr):
+                stmts(e.stmts, bound)
+            elif isinstance(e, ast.UnsafeExpr):
+                stmts(e.body, bound)
+            elif isinstance(e, ast.Lambda):
+                b = set(bound)
+                for p in e.params:
+                    b.add(p.name)
+                expr(e.body, b)
+            elif isinstance(e, ast.AsmExpr):
+                for v in e.operands:
+                    expr(v, bound)
+
+        def stmts(items, bound):
+            for st in items:
+                if isinstance(st, ast.Let):
+                    if st.init is not None:
+                        expr(st.init, bound)
+                    bound.add(st.name)
+                elif isinstance(st, ast.Assign):
+                    expr(st.target, bound)
+                    expr(st.value, bound)
+                elif isinstance(st, ast.ExprStmt):
+                    expr(st.expr, bound)
+                elif isinstance(st, ast.If):
+                    expr(st.cond, bound)
+                    stmts(st.then_body, set(bound))
+                    for c, body in st.elifs:
+                        expr(c, bound)
+                        stmts(body, set(bound))
+                    if st.else_body is not None:
+                        stmts(st.else_body, set(bound))
+                elif isinstance(st, ast.While):
+                    expr(st.cond, bound)
+                    stmts(st.body, set(bound))
+                elif isinstance(st, ast.For):
+                    expr(st.iter, bound)
+                    b = set(bound)
+                    b.add(st.name)
+                    stmts(st.body, b)
+                elif isinstance(st, ast.Return):
+                    if st.value is not None:
+                        expr(st.value, bound)
+                elif isinstance(st, ast.UnsafeStmt):
+                    stmts(st.body, set(bound))
+                elif isinstance(st, ast.Defer):
+                    expr(st.expr, bound)
+
+        expr(body, set(params))
+        return found
+
     def infer_expr(self, e) -> object:
         if isinstance(e, ast.IntLit):
             return self.fresh(cons=frozenset({"int"}))
@@ -949,38 +1056,35 @@ class FnChecker:
                 ptypes.append(type_from_ast_checked(
                     self.m, p.ty, self.info.generic_vars, self.err,
                     "closure parameter"))
-            self.push()
-            base = len(self.scopes) - 1
-            for p, pt in zip(e.params, ptypes):
-                self.bind(p.name, pt)
-            old = self.lambda_base
-            self.lambda_base = base
-            self.lambda_captures.append(set())
-            body_ty = self.infer(e.body)
-            caps = self.lambda_captures.pop()
-            self.lambda_base = old
-            self.pop()
-            if isinstance(self.u.resolve_deep(body_ty), TRef):
-                self.err("closures cannot return borrows yet", e)
-            e.param_types = [self.u.resolve_deep(t) for t in ptypes]
-            e.result_type = self.u.resolve_deep(body_ty)
-            if not caps:
-                return TFn(e.param_types, e.result_type)
-            if old is not None:
-                self.err("nested capturing closures are not supported yet", e)
+            free = self.lambda_free_vars(e.body, {p.name for p in e.params})
             captures = []
-            for cname in sorted(caps):
+            for cname in free:
                 ct = self.u.resolve_deep(self.lookup(cname))
-                if not self.m.is_copy(ct):
-                    self.err(
-                        f"cannot capture non-Copy value `{cname}` in a closure yet",
-                        e, "capture a reference (`&value`) or a Copy value")
                 if isinstance(ct, TPtr):
                     self.err(f"cannot capture raw pointer `{cname}` in a closure", e)
                 if isinstance(ct, TRef) and ct.mut:
                     self.err(f"cannot capture mutable reference `{cname}` in a closure",
                              e, "capture a shared reference instead")
                 captures.append((cname, ct))
+            self.push()
+            base = len(self.scopes) - 1
+            for p, pt in zip(e.params, ptypes):
+                self.bind(p.name, pt)
+            for cname, ct in captures:
+                self.bind(cname, ct if self.m.is_copy(ct) else TRef(False, ct))
+            old = self.lambda_base
+            self.lambda_base = base
+            body_ty = self.infer(e.body)
+            self.lambda_base = old
+            self.pop()
+            if isinstance(self.u.resolve_deep(body_ty), TRef):
+                self.err("closures cannot return borrows yet", e)
+            e.param_types = [self.u.resolve_deep(t) for t in ptypes]
+            e.result_type = self.u.resolve_deep(body_ty)
+            if not captures:
+                return TFn(e.param_types, e.result_type)
+            if old is not None:
+                self.err("nested capturing closures are not supported yet", e)
             cname = f"__closure_{len(self.m.closures)}"
             self.m.closures[cname] = ClosureInfo(
                 name=cname, params=list(e.param_types),
@@ -1058,10 +1162,6 @@ class FnChecker:
         self.err(f"unsupported expression {type(e).__name__}", e)
 
     def infer_name(self, e):
-        idx = self.lookup_index(e.name)
-        if (idx is not None and self.lambda_base is not None
-                and idx < self.lambda_base and self.lambda_captures):
-            self.lambda_captures[-1].add(e.name)
         t = self.lookup(e.name)
         if t is not None:
             return self.u.resolve_deep(t)
@@ -2318,6 +2418,22 @@ class BorrowChecker:
             self.use(e.base)
             return
         if isinstance(e, ast.Lambda):
+            for cname, ct in getattr(e, "captures", []):
+                if not self.m.is_copy(ct):
+                    bv = self.lookup(cname)
+                    if bv is not None:
+                        self.move_var(bv, e, cname)
+            self.push()
+            for p, pt in zip(e.params, getattr(e, "param_types", [])):
+                self.bind(p.name, pt, False, p)
+            for cname, ct in getattr(e, "captures", []):
+                self.bind(cname, ct if self.m.is_copy(ct) else TRef(False, ct),
+                          False, e)
+            if isinstance(e.body, ast.BlockExpr):
+                self.check_block(e.body.stmts, new_scope=False)
+            else:
+                self.use(e.body)
+            self.pop()
             return
         if isinstance(e, ast.Binary):
             self.use(e.left)
