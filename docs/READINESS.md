@@ -17,17 +17,33 @@ remaining blockers are listed with severity and an honest estimate.
 | Safe-code memory safety | **Partial** | Ownership, borrows, returned-borrow tracking, exact drops, init analysis, bounds checks; no formal proof, no fuzzing campaign. |
 | Defined arithmetic | **Yes** | Division/modulo/shift trap; `-fwrapv` gives defined wrapping. |
 | Language stability | **No** | No 1.0 spec, no semver promise; breaking changes expected. |
-| Type system completeness | **Partial** | HM + ADTs + generics + generic impls + traits + defaults + bounds + returned borrows + `&dyn Trait`; no explicit lifetime parameters, associated types or supertraits. |
+| Type system completeness | **Partial** | HM + ADTs + generics + generic impls + traits + defaults + supertraits + returned views + `&dyn`/`Box<dyn>`; no explicit lifetime parameters or associated types. |
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 50 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
+| Test suite | **Moderate** | 60 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Reference, design notes, readiness audit, examples. |
-| Community / governance | **No** | No maintainer policy, no releases, no deprecation process. |
+| Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.7.0 added
+
+- **Returnable borrowed views**: structs containing references can be returned
+  when every reference derives from the single reference parameter; callers
+  keep the source borrowed for the view's lifetime.
+- **Supertraits**: `trait Child: Parent` with inherited methods, static
+  dispatch, `&dyn Child` and `Box<dyn Child>` support.
+- **Owned trait objects**: `Box<dyn Trait>` with generated vtables and a
+  destructor; creation is supported directly from `box(value)`.
+- **Empty/default-only impls** via `pass`, plus `pass` as a no-op statement.
+- **Fixed** a crash when a trait had only default methods and an impl provided
+  no functions (`KeyError` during collection).
+- **Fixed** inconsistent C struct naming for `List<Box<dyn Trait>>`.
+- Trait element coercion in `List.push` / `List.set`.
+- 60/60 end-to-end tests.
 
 ## What 0.6.0 added
 
@@ -89,10 +105,10 @@ remaining blockers are listed with severity and an honest estimate.
 
 | # | Blocker | Why it blocks production | Rough effort |
 | --- | --- | --- | --- |
-| C1 | Traits are missing associated items | Defaults, bounds, generic impls and `&dyn Trait` work; no associated types, supertraits, or `Box<dyn Trait>`. | 3–6 weeks |
-| C2 | Lifetimes are conservative | Returned borrows and references in structs work only at block scope; no explicit lifetime parameters, so views cannot be returned or rebound. | 4–8 weeks |
+| C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
+| C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | No visibility, namespacing, separate compilation or package boundaries. | 3–5 weeks |
-| C4 | No fuzzing / formal soundness evidence | The checker is hand-written; 24 tests cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No fuzzing / formal soundness evidence | The checker is hand-written; 60 tests cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 
 ### High

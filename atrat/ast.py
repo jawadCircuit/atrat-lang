@@ -312,6 +312,11 @@ class Continue(Stmt):
 
 
 @dataclass
+class Pass(Stmt):
+    pass
+
+
+@dataclass
 class UnsafeStmt(Stmt):
     body: list = field(default_factory=list)
 
@@ -375,6 +380,7 @@ class ImplMethod:
 class TraitDecl:
     name: str = ""
     generics: list = field(default_factory=list)
+    supertraits: list = field(default_factory=list)
     methods: list = field(default_factory=list)   # list[FnDecl] signatures
     line: int = 0
     col: int = 0

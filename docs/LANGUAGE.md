@@ -154,8 +154,27 @@ trait Named:
         return "hello {self.name()}"
 ```
 
+Traits can extend other traits. The child inherits all parent methods and an
+implementation must also implement every parent:
+
+```atrat
+trait Named:
+    fn name(&self) -> String
+
+trait Greet: Named:
+    fn greet(&self) -> String:
+        return "hello, " + self.name()
+
+impl Named for P:
+    fn name(&self) -> String:
+        return self.n.clone()
+
+impl Greet for P:
+    pass                         # all methods have defaults
+```
+
 `Self` is available in trait signatures and impl methods. Trait objects are
-supported through `&dyn Trait` / `&mut dyn Trait`:
+supported through `&dyn Trait` / `&mut dyn Trait` and owned `Box<dyn Trait>`:
 
 ```atrat
 fn render(x: &dyn Show) -> String:
@@ -164,12 +183,17 @@ fn render(x: &dyn Show) -> String:
 let item = P { name: "p" }
 let view: &dyn Show = &item
 print(view.show())
+
+let owned: Box<dyn Show> = box(P { name: "q" })
+print(owned.show())
 ```
 
-The compiler generates a vtable per `(trait, type)` pair. Trait methods used in
-a `dyn` vtable must take `&self` or `&mut self`, must not be generic, and must
-not return references or `Self`. There are no associated types or supertraits
-yet.
+The compiler generates a vtable per `(trait, type)` pair, including inherited
+methods and a destructor for owned trait objects. Trait methods used in a `dyn`
+vtable must take `&self` or `&mut self`, must not be generic, and must not
+return references or `Self`. A `Box<dyn Trait>` can be created from
+`box(value)`, an existing `Box<T>` local (moved into the trait object), or a
+call returning `Box<T>`. There are no associated types.
 
 ## 5. Expressions and operators
 
@@ -315,9 +339,28 @@ let v = View { r: &x }
 print(*v.r)
 ```
 
-These are conservative, block-scoped lifetimes: a value containing a reference
-keeps its source borrowed for the whole block, cannot be returned, and cannot be
-rebound. There are no explicit lifetime parameters yet.
+A struct containing references can be returned when every reference in it
+derives from the function's single reference parameter:
+
+```atrat
+struct View:
+    r: &i64
+
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.x }
+
+fn make(x: &i64) -> View:
+    return View { r: x }
+```
+
+The caller keeps the source borrowed for as long as the returned view lives.
+A view cannot be built from a local that does not come from that parameter, and
+returning a view of a temporary is rejected.
+
+These are still conservative, block-scoped lifetimes: a value containing a
+reference cannot be rebound, escaped through a nested closure, or stored beyond
+its source's block. There are no explicit lifetime parameters yet.
 
 ## 6. Statements and control flow
 
@@ -495,11 +538,11 @@ param        := ("&" "mut"?)? NAME (":" type)? | "&" "mut"? "self"
 struct       := "struct" NAME generics? ":" NEWLINE INDENT (NAME ":" type)* DEDENT
 enum         := "enum" NAME generics? ":" NEWLINE INDENT variant* DEDENT
 variant      := NAME ("(" type ("," type)* ")")?
-trait        := "trait" NAME generics? ":" NEWLINE INDENT fnsig* DEDENT
-impl         := "impl" generics? (NAME "for")? NAME ":" NEWLINE INDENT fn* DEDENT
+trait        := "trait" NAME generics? (":" supertrait ("," supertrait)*)? ":" NEWLINE INDENT fnsig* DEDENT
+impl         := "impl" generics? (NAME "for")? NAME ":" NEWLINE INDENT (fn | "pass")* DEDENT
 block        := NEWLINE INDENT stmt+ DEDENT
 stmt         := let | assign | expr | if | while | for | return | break
-              | continue | unsafe
+              | continue | pass | unsafe
 expr         := binary ((".." | "..=") binary?)?
 binary       := unary (op binary)?
 unary        := ("-"|"!"|"~"|"&" "mut"?|"*") unary | postfix ("as" type)*

@@ -159,6 +159,9 @@ class Codegen:
         if isinstance(t, TCon):
             if t.name in C_PRIMS:
                 return C_PRIMS[t.name]
+            if (t.name == "Box" and len(t.args) == 1
+                    and isinstance(t.args[0], TCon) and t.args[0].name == "dyn"):
+                return self.ctype(t)
             key = self.mangle(t)
             if key in self.type_names:
                 return self.type_names[key]
@@ -181,6 +184,9 @@ class Codegen:
             if t.name == "List":
                 return self._emit_list(t)
             if t.name == "Box":
+                if (len(t.args) == 1 and isinstance(t.args[0], TCon)
+                        and t.args[0].name == "dyn"):
+                    return self._emit_box_dyn(t)
                 return self._emit_box(t)
             if t.name == "Rc":
                 return self._emit_rc(t)
@@ -336,8 +342,8 @@ class Codegen:
         if key in self.type_names:
             return self.type_names[key]
         self.type_names[key] = cname
-        fields = []
-        for mname, sig in tri.methods.items():
+        fields = ["    void (*drop)(void*);"]
+        for mname, (_owner, sig) in self.m.trait_methods(tri.name).items():
             ret = self.ctype(sig.ret)
             params = ", ".join(self.ctype(p) for p in sig.params[1:])
             args = ", " + params if params else ""
@@ -352,6 +358,23 @@ class Codegen:
             + "} " + cname + ";" + nl)
         return cname
 
+    def _emit_box_dyn(self, t: TCon) -> str:
+        nl = chr(10)
+        key = self.mangle(t)
+        dyn_t = t.args[0]
+        tri = self.m.traits[dyn_t.args[0].name]
+        cname = "AtrBoxDyn_" + tri.name
+        if key in self.type_names:
+            return self.type_names[key]
+        self.type_names[key] = cname
+        self._emit_dyn(dyn_t)
+        self.type_defs.append(
+            "typedef struct " + cname + " {" + nl
+            + "    void* data;" + nl
+            + "    const AtrVt_" + tri.name + "* vtbl;" + nl
+            + "} " + cname + ";" + nl)
+        return cname
+
     def dyn_vtable(self, trait: str, base: TCon) -> str:
         nl = chr(10)
         tri = self.m.traits[trait]
@@ -362,13 +385,14 @@ class Codegen:
         self.dyn_vtables[key] = vtname
         vt = "AtrVt_" + trait
         owner_c = self.ctype(base)
-        impl = tri.impls[base.name]
         entries = []
-        for mname, sig in tri.methods.items():
+        for mname, (method_trait, _sig) in self.m.trait_methods(tri.name).items():
+            impl = self.m.traits[method_trait].impls.get(base.name) or {}
             info = impl.get(mname)
             if info is None or info.generics:
                 raise CodegenError(
-                    f"cannot build a vtable for `{base.name}` as `dyn {trait}`")
+                    f"cannot build a vtable for `{base.name}` as `dyn {trait}`: "
+                    f"missing `{method_trait}.{mname}`")
             cname = self.ensure_fn(info, [])
             wname = vtname + "_" + mname
             params = [self.concrete(p) for p in info.params[1:]]
@@ -386,6 +410,15 @@ class Codegen:
                 body += nl + f"    return {cname}({', '.join(call_args)});" + nl + "}" + nl
             self.fn_bodies.append(body)
             entries.append(f"    .m_{mname} = {wname}")
+        dropfn = self.ensure_drop(base)
+        dname = vtname + "_drop"
+        self.helper_defs.append(f"static void {dname}(void* _p);" + nl)
+        dbody = f"static void {dname}(void* _p) {{" + nl + "    if (_p) {"
+        if dropfn:
+            dbody += nl + f"        {dropfn}(({owner_c}*)_p);"
+        dbody += nl + "        free(_p);" + nl + "    }" + nl + "}" + nl
+        self.fn_bodies.append(dbody)
+        entries.insert(0, f"    .drop = {dname}")
         self.helper_defs.append(
             f"static const {vt} {vtname} = {{{nl}" + ("," + nl).join(entries)
             + nl + "};" + nl)
@@ -410,19 +443,63 @@ class Codegen:
         return ("({ " + c + " " + tmp + "; " + tmp + ".data = (void*)(" + data
                 + "); " + tmp + ".vtbl = &" + vt + "; " + tmp + "; })")
 
+    def emit_box_dyn_coercion(self, e) -> str:
+        nl = chr(10)
+        trait, base = e.coerce_box_dyn
+        base = self.concrete(base)
+        t = self.concrete(e.ty)
+        c = self.ctype(t)
+        vt = self.dyn_vtable(trait, base)
+        box_t = TCon("Box", [base])
+        box_c = self.ctype(box_t)
+        saved_dyn = getattr(e, "coerce_box_dyn", None)
+        saved_ty = e.ty
+        e.coerce_box_dyn = None
+        e.ty = box_t
+        try:
+            boxval = self.emit_expr(e, consume=True)
+        finally:
+            e.coerce_box_dyn = saved_dyn
+            e.ty = saved_ty
+        btmp = self.temp("box")
+        tmp = self.temp("boxdyn")
+        return ("({ " + box_c + " " + btmp + " = " + boxval + "; "
+                + c + " " + tmp + "; " + tmp + ".data = (void*)" + btmp
+                + ".ptr; " + tmp + ".vtbl = &" + vt + "; " + btmp
+                + ".ptr = NULL; " + tmp + "; })")
+
     def emit_dyn_method(self, e, trait: str, method: str) -> str:
         nl = chr(10)
         recv = self.emit_expr(e.callee.base, consume=False)
-        cc = self.ctype(e.callee.base.ty)
+        bt = self.concrete(e.callee.base.ty)
+        cc = self.ctype(bt)
+        ref_box = (isinstance(bt, TRef) and isinstance(bt.inner, TCon)
+                   and bt.inner.name == "Box" and isinstance(bt.inner.args[0], TCon)
+                   and bt.inner.args[0].name == "dyn")
         tmp = self.temp("dyn")
         args = []
         for a, pt in zip(e.args, getattr(e, "param_types", [])):
             consume = not isinstance(self.concrete(pt), TRef)
             args.append(self.emit_expr(a, consume=consume))
         tail = (", " + ", ".join(args)) if args else ""
-        return ("({ " + cc + " " + tmp + " = " + recv + "; ((const AtrVt_" + trait
-                + "*)" + tmp + ".vtbl)->m_" + method + "(" + tmp + ".data"
-                + tail + "); })")
+        acc = ("(*" + tmp + ")") if ref_box else tmp
+        call = ("((const AtrVt_" + trait + "*)" + acc + ".vtbl)->m_" + method
+                + "(" + acc + ".data" + tail + ")")
+        owned_temp = (isinstance(bt, TCon) and bt.name == "Box"
+                      and isinstance(bt.args[0], TCon) and bt.args[0].name == "dyn"
+                      and not isinstance(e.callee.base,
+                                         (ast.Name, ast.Field, ast.Index, ast.Deref)))
+        if not owned_temp:
+            return ("({ " + cc + " " + tmp + " = " + recv + "; " + call + "; })")
+        dropfn = self.ensure_drop(bt)
+        rt = self.concrete(getattr(e, "result_type", TCon("unit")))
+        if isinstance(rt, TCon) and rt.name == "unit":
+            return ("({ " + cc + " " + tmp + " = " + recv + "; " + call + "; "
+                    + dropfn + "(&" + tmp + "); ((void)0); })")
+        rc = self.ctype(rt)
+        res = self.temp("res")
+        return ("({ " + cc + " " + tmp + " = " + recv + "; " + rc + " " + res
+                + " = " + call + "; " + dropfn + "(&" + tmp + "); " + res + "; })")
 
     def _emit_list(self, t: TCon) -> str:
         key = self.mangle(t)
@@ -672,6 +749,15 @@ static inline void atr_list_{key}_free({cname}* self) {{
             return
         if isinstance(t, TCon) and t.name == "Box":
             inner = self.concrete(t.args[0])
+            if isinstance(inner, TCon) and inner.name == "dyn":
+                self.drop_defs.append(f"""static void {name}({c}* v) {{
+    if (v->data && v->vtbl) {{
+        v->vtbl->drop(v->data);
+        v->data = NULL;
+    }}
+}}
+""")
+                return
             d = self.ensure_drop(inner)
             body = f"    {d}(v->ptr);\n" if d else ""
             self.drop_defs.append(f"""static void {name}({c}* v) {{
@@ -1008,6 +1094,8 @@ static inline void atr_list_{key}_free({cname}* self) {{
         return out
 
     def _emit_stmt(self, s, indent, pad) -> list[str]:
+        if isinstance(s, ast.Pass):
+            return []
         if isinstance(s, ast.Let):
             t = self.concrete(s.ty)
             c = self.ctype(t)
@@ -1315,6 +1403,8 @@ static inline void atr_list_{key}_free({cname}* self) {{
     # expressions
     # ------------------------------------------------------------------
     def emit_expr(self, e, consume=False) -> str:
+        if getattr(e, "coerce_box_dyn", None) is not None:
+            return self.emit_box_dyn_coercion(e)
         if getattr(e, "coerce_dyn", None) is not None:
             return self.emit_dyn_coercion(e)
         if getattr(e, "coerce_str_to_string", False):

@@ -80,12 +80,12 @@ point, and the generated C is available with `atrc emit-c`.
 | Type inference and checking | **Working**, with known omissions |
 | Ownership / borrow checker | **Working**, conservative by design |
 | Native C backend | **Working**, GCC/Clang |
-| Recursive types, generics, traits, `dyn` | **Working** for the documented subset |
+| Recursive types, generics, traits, supertraits, `dyn` and `Box<dyn>` | **Working** for the documented subset |
 | Standard library | **Minimal** |
 | Modules / packaging / tooling | **Early** |
 | Production readiness | **No** |
 
-There are **50 end-to-end tests** covering successful programs, exact stdout,
+There are **60 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -147,13 +147,16 @@ and compiled to native code.
 Atrat is a real, working language implementation, but **not a finished
 production compiler**. The important current gaps:
 
-- Traits support static dispatch, generic impls, default methods and
-  `&dyn Trait` with generated vtables. There are no associated types or
-  supertraits yet, and `dyn` cannot be boxed (`Box<dyn Trait>`).
-- Returned borrows work only when derived from the single reference parameter
-  (`&self.field` getters). References may be stored in structs, but lifetimes
-  are conservative and block-scoped: such values cannot be returned or rebound.
-  There are no explicit lifetime annotations yet.
+- Traits support static dispatch, generic impls, default methods, supertraits,
+  `&dyn Trait` / `&mut dyn Trait` and owned `Box<dyn Trait>` with generated
+  vtables and destructors. There are no associated types or trait-level
+  generics beyond the implemented subset.
+- Borrowed **views** work: a struct containing references can be returned when
+  every reference derives from the function's single reference parameter, and
+  callers keep the source borrowed for the view's lifetime. Lifetimes are still
+  conservative and block-scoped: views cannot be rebound, stored beyond the
+  block, or captured in ways that outlive their source. There are no explicit
+  lifetime annotations yet.
 - Modules are a flat namespace: `import` merges declarations, `pub` is parsed
   but visibility is not enforced, and there is no separate compilation.
 - Closures capture Copy values by value and non-Copy values by move. Inside a
@@ -202,8 +205,9 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **50/50** pass, including trait objects, generic impls, struct
-references, recursive drops, moved closure captures, returned getters,
+Currently **60/60** pass, including trait objects, supertraits, owned
+`Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
+captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised
 paths.
 

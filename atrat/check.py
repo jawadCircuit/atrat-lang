@@ -61,6 +61,7 @@ class TraitInfo:
     name: str
     generics: list
     methods: dict           # method name -> ast.FnDecl signature
+    supertraits: list = field(default_factory=list)
     impls: dict = field(default_factory=dict)   # type name -> {method: FnInfo}
 
 
@@ -146,6 +147,32 @@ class Module:
         for i, (vn, _) in enumerate(info.variants):
             if vn == variant:
                 return VariantRef(enum_name, i)
+        return None
+
+    def trait_lineage(self, name: str, _seen=None):
+        """Yield `name` followed by its supertraits, child-first, once each."""
+        seen = _seen if _seen is not None else set()
+        if name in seen or name not in self.traits:
+            return
+        seen.add(name)
+        yield name
+        for parent in self.traits[name].supertraits:
+            yield from self.trait_lineage(parent, seen)
+
+    def trait_methods(self, name: str) -> dict:
+        """All methods visible on a trait, with child declarations overriding parents."""
+        out = {}
+        for owner in self.trait_lineage(name):
+            for mname, sig in self.traits[owner].methods.items():
+                if mname not in out:
+                    out[mname] = (owner, sig)
+        return out
+
+    def trait_method(self, name: str, method: str):
+        for owner in self.trait_lineage(name):
+            sig = self.traits[owner].methods.get(method)
+            if sig is not None:
+                return owner, sig
         return None
 
     def find_unqualified_variant(self, name: str) -> VariantRef | None:
@@ -234,7 +261,8 @@ def collect(prog: ast.Program) -> Module:
         elif isinstance(d, ast.TraitDecl):
             if d.name in m.traits:
                 raise TypeError_(f"trait '{d.name}' is defined twice", d.line, d.col)
-            m.traits[d.name] = TraitInfo(d.name, list(d.generics), {})
+            m.traits[d.name] = TraitInfo(d.name, list(d.generics), {},
+                                         list(getattr(d, "supertraits", [])))
 
     # Pass 2: fields, variants.
     for d in prog.decls:
@@ -264,6 +292,30 @@ def collect(prog: ast.Program) -> Module:
             m.enums[d.name].variants = variants
             for i, (vname, _) in enumerate(variants):
                 m.variants.setdefault(vname, []).append(VariantRef(d.name, i))
+
+    for d in prog.decls:
+        if isinstance(d, ast.TraitDecl):
+            for parent in getattr(d, "supertraits", []):
+                if parent not in m.traits:
+                    raise TypeError_(f"trait '{d.name}' has unknown supertrait '{parent}'",
+                                     d.line, d.col)
+                if parent == d.name:
+                    raise TypeError_(f"trait '{d.name}' cannot extend itself",
+                                     d.line, d.col)
+
+    trait_lines = {d.name: (d.line, d.col) for d in prog.decls
+                   if isinstance(d, ast.TraitDecl)}
+
+    def _check_trait_cycles(node, path):
+        if node in path:
+            chain = " -> ".join(path[path.index(node):] + [node])
+            line, col = trait_lines.get(node, (0, 0))
+            raise TypeError_(f"cyclic supertrait relationship: {chain}", line, col)
+        for parent in m.traits[node].supertraits:
+            _check_trait_cycles(parent, path + [node])
+
+    for name in m.traits:
+        _check_trait_cycles(name, [])
 
     for d in prog.decls:
         if isinstance(d, ast.TraitDecl):
@@ -328,6 +380,7 @@ def collect(prog: ast.Program) -> Module:
                 if owner in trait.impls:
                     raise TypeError_(f"'{owner}' already implements '{trait.name}'",
                                      d.line, d.col)
+                trait.impls.setdefault(owner, {})
                 provided = {fn.name for fn in d.methods}
                 for required, rsig in trait.methods.items():
                     if required not in provided and not rsig.decl.body:
@@ -443,6 +496,37 @@ def _has_ref(m: Module, t, _seen=None) -> bool:
     return False
 
 
+def _has_mut_ref(m: Module, t, _seen=None) -> bool:
+    t = m.u.resolve_deep(t)
+    if isinstance(t, TRef):
+        return bool(t.mut) or _has_mut_ref(m, t.inner, _seen)
+    if isinstance(t, TFn):
+        return (any(_has_mut_ref(m, p, _seen) for p in t.params)
+                or _has_mut_ref(m, t.ret, _seen))
+    if isinstance(t, TCon):
+        info = m.structs.get(t.name)
+        if info is not None:
+            seen = _seen or set()
+            key = (t.name, tuple(a.show() for a in t.args))
+            if key in seen:
+                return False
+            seen.add(key)
+            mp = dict(zip(info.generics, t.args))
+            return any(_has_mut_ref(m, subst(ft, mp), seen) for _, ft in info.fields)
+        info = m.enums.get(t.name)
+        if info is not None:
+            seen = _seen or set()
+            key = (t.name, tuple(a.show() for a in t.args))
+            if key in seen:
+                return False
+            seen.add(key)
+            mp = dict(zip(info.generics, t.args))
+            return any(_has_mut_ref(m, subst(ft, mp), seen)
+                       for _, tys in info.variants for ft in tys)
+        return any(_has_mut_ref(m, a, _seen) for a in t.args)
+    return False
+
+
 def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
              impl_generics=None) -> FnInfo:
     u = m.u
@@ -482,11 +566,6 @@ def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
     borrow_param = None
     borrow_mut = False
     if _has_ref(m, ret):
-        if not isinstance(ret, TRef) or _has_ref(m, ret.inner):
-            raise TypeError_(
-                f"function '{d.name}' returns a nested reference; only a direct "
-                f"`&T`/`&mut T` return is supported", d.line, d.col,
-                "return an owned value instead")
         ref_params = [(p.name, t) for p, t in zip(d.params, params)
                       if isinstance(t, TRef)]
         if len(ref_params) != 1:
@@ -495,7 +574,7 @@ def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
                 f"reference parameters", d.line, d.col,
                 "a returned borrow needs exactly one `&T`/`&mut T` parameter")
         borrow_param = ref_params[0][0]
-        borrow_mut = ret.mut
+        borrow_mut = _has_mut_ref(m, ret)
     scheme_vars = [v.id for v in gvars.values()]
     return FnInfo(decl=d, name=d.name, generics=impl_generics + list(d.generics),
                   generic_vars=gvars, params=params, ret=ret,
@@ -583,10 +662,18 @@ class FnChecker:
             if not (isinstance(base, TCon) and base.name != "dyn"):
                 return False
             tri = self.m.traits.get(w.inner.args[0].name)
-            impl = tri.impls.get(base.name) if tri else None
-            if impl is None:
+            if tri is None:
                 return False
-            for mname, sig in tri.methods.items():
+            # Every supertrait needs its own impl; methods may live on any
+            # trait in the hierarchy.
+            for owner in self.m.trait_lineage(tri.name):
+                if base.name not in self.m.traits[owner].impls:
+                    return False
+            methods = self.m.trait_methods(tri.name)
+            if len(methods) == 0:
+                return False
+            for mname, (owner, sig) in methods.items():
+                impl = self.m.traits[owner].impls.get(base.name) or {}
                 info = impl.get(mname)
                 if info is None or info.generics:
                     return False
@@ -596,9 +683,46 @@ class FnChecker:
                     return False
                 if any(_contains_tvar(p) for p in sig.params):
                     return False
-            if len(tri.methods) == 0:
-                return False
             expr.coerce_dyn = (tri.name, base)
+            expr.ty = w
+            return True
+        if (isinstance(w, TCon) and w.name == "Box" and len(w.args) == 1
+                and isinstance(w.args[0], TCon) and w.args[0].name == "dyn"
+                and isinstance(g, TCon) and g.name == "Box" and len(g.args) == 1):
+            dyn_t = w.args[0]
+            base = self.u.resolve_deep(g.args[0])
+            if isinstance(base, TVar):
+                d = self.u.default(base)
+                if not (isinstance(d, TVar) and d.id == base.id):
+                    self.u.unify(base, d)
+                    base = self.u.resolve_deep(base)
+            if not (isinstance(base, TCon) and base.name != "dyn"):
+                return False
+            tri = self.m.traits.get(dyn_t.args[0].name)
+            if tri is None:
+                return False
+            # `box(value)`, a local `Box<T>`, and calls returning Box<T>
+            # transfer the allocation into the trait object.
+            if not (isinstance(expr, _ast.Name) or isinstance(expr, _ast.Call)):
+                return False
+            for owner in self.m.trait_lineage(tri.name):
+                if base.name not in self.m.traits[owner].impls:
+                    return False
+            methods = self.m.trait_methods(tri.name)
+            if len(methods) == 0:
+                return False
+            for mname, (owner, sig) in methods.items():
+                impl = self.m.traits[owner].impls.get(base.name) or {}
+                info = impl.get(mname)
+                if info is None or info.generics:
+                    return False
+                if sig.self_mode is None:
+                    return False
+                if _contains_ref(sig.ret) or _contains_tvar(sig.ret):
+                    return False
+                if any(_contains_tvar(p) for p in sig.params):
+                    return False
+            expr.coerce_box_dyn = (tri.name, base)
             expr.ty = w
             return True
         if isinstance(w, TCon) and w.name == "String"                 and isinstance(g, TCon) and g.name == "str":
@@ -694,6 +818,8 @@ class FnChecker:
             self.pop()
 
     def check_stmt(self, s):
+        if isinstance(s, ast.Pass):
+            return
         if isinstance(s, ast.Let):
             if s.ty is not None:
                 declared = type_from_ast_checked(self.m, s.ty, self.info.generic_vars,
@@ -1506,23 +1632,39 @@ class FnChecker:
                 t = self.u.resolve_deep(t)
                 inner = t.inner if isinstance(t, TRef) else t
 
+        boxed_ref = isinstance(t, TRef)
+        boxed_dyn = (isinstance(inner, TCon) and inner.name == "Box"
+                     and len(inner.args) == 1
+                     and isinstance(inner.args[0], TCon)
+                     and inner.args[0].name == "dyn")
+        if boxed_dyn:
+            boxed_inner = inner.args[0]
+            if not boxed_ref:
+                t = boxed_inner
+            inner = boxed_inner
+
         if isinstance(inner, TCon) and inner.name == "dyn":
             tri = self.m.traits.get(inner.args[0].name)
             if tri is None:
                 self.err(f"unknown trait '{inner.args[0].name}'", e)
-            sig = tri.methods.get(name)
-            if sig is None:
+            found = self.m.trait_method(tri.name, name)
+            if found is None:
                 self.err(f"trait '{tri.name}' has no method '{name}'", e)
+            sig = found[1]
             if sig.self_mode is None:
                 self.err(f"`dyn {tri.name}` cannot call '{name}' (takes self by value)",
                          e)
-            if sig.self_mode == "&mut" and not (isinstance(t, TRef) and t.mut):
-                self.err(f"method '{name}' needs `&mut dyn {tri.name}`", e)
+            if sig.self_mode == "&mut":
+                if boxed_ref:
+                    if not t.mut:
+                        self.err(f"method '{name}' needs `&mut dyn {tri.name}`", e)
+                elif not boxed_dyn and not (isinstance(t, TRef) and t.mut):
+                    self.err(f"method '{name}' needs `&mut dyn {tri.name}`", e)
             params = list(sig.params[1:])
             if len(params) != len(e.args):
                 self.err(f"trait method '{tri.name}.{name}' takes {len(params)} "
                          f"argument(s), got {len(e.args)}", e)
-            mp = {"Self": t}
+            mp = {"Self": inner if boxed_dyn else t}
             for a, want in zip(e.args, params):
                 got = self.infer(a)
                 self.assignable(a, got, subst(want, mp), a, "dyn method argument")
@@ -1676,7 +1818,8 @@ class FnChecker:
                 return BOOL
             if name == "push":
                 self.expect_arity(e, 1)
-                self.infer(e.args[0], elem)
+                got = self.infer(e.args[0])
+                self.assignable(e.args[0], got, elem, e.args[0], "list element")
                 mutable_receiver("push")
                 e.solved = ("list", "push")
                 e.param_types = [elem]
@@ -1699,7 +1842,8 @@ class FnChecker:
             if name == "set":
                 self.expect_arity(e, 2)
                 self.infer(e.args[0], USIZE)
-                self.infer(e.args[1], elem)
+                got = self.infer(e.args[1])
+                self.assignable(e.args[1], got, elem, e.args[1], "list element")
                 mutable_receiver("set")
                 e.solved = ("list", "set")
                 e.param_types = [USIZE, elem]
@@ -1716,9 +1860,10 @@ class FnChecker:
                 tri = self.m.traits.get(tname)
                 if tri is None:
                     continue
-                sig = tri.methods.get(name)
-                if sig is None:
+                found = self.m.trait_method(tname, name)
+                if found is None:
                     continue
+                owner_name, sig = found
                 mapping = {}
                 mp = {"Self": inner}
                 sig_params = [subst(p, mp) for p in sig.params]
@@ -1745,7 +1890,7 @@ class FnChecker:
                 for a, want in zip(e.args, params):
                     got = self.infer(a)
                     self.assignable(a, got, want, a, "trait method argument")
-                e.solved = ("trait_method", tname, name)
+                e.solved = ("trait_method", owner_name, name)
                 e.self_auto = auto
                 e.trait_self_mode = sig.self_mode
                 e.inst = mapping
@@ -1807,10 +1952,13 @@ class FnChecker:
             if not isinstance(t, TCon):
                 continue
             for b in bounds:
-                tri = self.m.traits.get(b)
-                if tri is not None and t.name not in tri.impls:
-                    self.err(f"`{t.show()}` does not implement trait `{b}`", node,
-                             f"add `impl {b} for {t.show()}`")
+                if b not in self.m.traits:
+                    continue
+                for owner in self.m.trait_lineage(b):
+                    tri = self.m.traits[owner]
+                    if t.name not in tri.impls:
+                        self.err(f"`{t.show()}` does not implement trait `{owner}`",
+                                 node, f"add `impl {owner} for {t.show()}`")
 
     def expect_arity(self, e, n):
         if len(e.args) != n:
@@ -2497,12 +2645,15 @@ class BorrowChecker:
 
     def note_returned_borrow(self, e, roots):
         rt = self.m.u.resolve_deep(getattr(e, "result_type", None) or e.ty)
-        if not isinstance(rt, TRef):
+        if not _has_ref(self.m, rt):
             return
         if not roots:
             self.err("cannot return a borrow of a temporary", e,
                      "bind the owner to a local first")
-        self.add_borrow(set(roots), rt.mut, e, temp=False)
+        mut = _has_mut_ref(self.m, rt)
+        e.returned_src = set(roots)
+        e.returned_mut = mut
+        self.add_borrow(set(roots), mut, e, temp=False)
 
     def check_call(self, e):
         solved = getattr(e, "solved", None)
@@ -2666,12 +2817,26 @@ class BorrowChecker:
                 roots |= r
                 mut = mut or m
             return roots, mut
+        if isinstance(e, ast.ListLit):
+            roots, mut = set(), False
+            for v in e.items:
+                r, m = self.borrow_sources(v, _seen)
+                roots |= r
+                mut = mut or m
+            return roots, mut
+        if isinstance(e, ast.Call):
+            src = getattr(e, "returned_src", None)
+            if src:
+                return set(src), bool(getattr(e, "returned_mut", False))
+            return set(), False
         if isinstance(e, ast.Cast):
             return self.borrow_sources(e.base, _seen)
         return set(), False
 
     # -- statements -------------------------------------------------------
     def check_stmt(self, s):
+        if isinstance(s, ast.Pass):
+            return
         if isinstance(s, ast.Let):
             init = s.init
             if init is not None:
@@ -2780,19 +2945,8 @@ class BorrowChecker:
             if s.value is not None:
                 self.use(s.value)
             ret = self.m.u.resolve_deep(self.info.ret)
-            if isinstance(ret, TRef):
-                roots = set()
-                v = s.value
-                if isinstance(v, ast.Ref):
-                    roots = self.place_roots(v.base, s)
-                elif isinstance(v, ast.Name):
-                    bv = self.lookup(v.name)
-                    if bv is not None and bv.borrow_src is not None:
-                        roots = set(bv.borrow_src)
-                    elif v.name == self.info.borrow_param:
-                        roots = {v.name}
-                elif isinstance(v, ast.Cast) and isinstance(v.base, (ast.Ref, ast.Name)):
-                    roots = self.place_roots(v.base, s)
+            if _has_ref(self.m, ret):
+                roots, _mut = self.borrow_sources(s.value)
                 want = self.info.borrow_param
                 if not roots or want is None or not roots <= {want}:
                     self.err(

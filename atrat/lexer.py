@@ -35,7 +35,7 @@ KEYWORDS = {
     "fn", "let", "var", "const", "struct", "enum", "impl", "trait", "match",
     "if", "elif", "else", "while", "for", "in", "return", "break", "continue",
     "true", "false", "unsafe", "asm", "extern", "import", "as", "mut", "self",
-    "pub", "type", "where", "loop", "defer",
+    "pub", "type", "where", "loop", "defer", "pass",
 }
 
 # Longest first: the scanner tries these in order.

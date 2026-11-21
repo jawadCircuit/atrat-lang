@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.7.0 — borrowed views, supertraits, owned trait objects
+
+### Language
+
+- **Returnable borrowed views**: a struct containing references can be returned
+  when every reference derives from the function's single reference parameter.
+  The caller keeps the source borrowed for the view's lifetime; views built from
+  locals or temporaries are rejected.
+- **Supertraits**: `trait Child: Parent` inherits methods; implementations must
+  provide the parent impl as well. Works through static bounds, `&dyn Child` and
+  `Box<dyn Child>`.
+- **`Box<dyn Trait>`**: owned trait objects with generated vtables and a
+  destructor. Supported from `box(value)`, an existing `Box<T>` local, or a
+  function returning `Box<T>` / `Box<dyn Trait>`.
+- **`pass`**: a no-op statement and a way to write an impl that only uses
+  default trait methods.
+- Coercion of owned boxes into `Box<dyn Trait>` in list elements, struct fields,
+  returns and function arguments.
+
+### Bug fixes
+
+- A trait with only default methods and an impl with no functions no longer
+  crashes collection with `KeyError`.
+- `List<Box<dyn Trait>>` no longer emits inconsistent C struct names.
+- `List.push` / `List.set` now use normal assignability, so coercions apply.
+- Temporary `Box<dyn Trait>` method receivers are dropped after the call.
+- Cyclic supertraits, unknown supertraits and missing parent impls are rejected.
+
+### Tests
+
+- 60 end-to-end tests, including returned views, supertrait dispatch, default-only
+  impls, `Box<dyn>` moves/lists/fields/returns, temporary receivers and new
+  negative cases.
+
 ## 0.6.0 — non-Copy closure captures
 
 - Closures now capture **non-Copy values by moving them into the closure

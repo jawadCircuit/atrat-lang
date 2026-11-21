@@ -304,6 +304,13 @@ class Parser:
         name = self.expect_name("trait name").value
         generics = self.parse_generics_opt()
         self.expect_op(":")
+        supertraits = []
+        if self.at("NAME"):
+            while True:
+                supertraits.append(self.expect_name("supertrait name").value)
+                if not self.eat_op(","):
+                    break
+            self.expect_op(":")
         self.expect_newline()
         self.expect("INDENT", None, "trait methods")
         methods = []
@@ -317,7 +324,8 @@ class Parser:
         self.expect("DEDENT")
         if not methods:
             raise self.error("a trait needs at least one method")
-        return ast.TraitDecl(name=name, generics=generics, methods=methods,
+        return ast.TraitDecl(name=name, generics=generics,
+                             supertraits=supertraits, methods=methods,
                              line=line, col=col)
 
     def parse_trait_fn(self) -> ast.FnDecl:
@@ -360,8 +368,12 @@ class Parser:
             if self.at("NEWLINE"):
                 self.advance()
                 continue
+            if self.at_kw("pass"):
+                self.advance()
+                self.expect_newline()
+                continue
             if not self.at_kw("fn"):
-                raise self.error("only functions may appear in an impl block")
+                raise self.error("only functions or `pass` may appear in an impl block")
             methods.append(self.parse_fn())
         self.expect("DEDENT")
         return ast.ImplBlock(type_name=tyname, trait_name=trait_name,
@@ -480,6 +492,10 @@ class Parser:
             self.expect_newline(val)
             return ast.Return(value=val, line=line, col=col)
 
+        if self.at_kw("pass"):
+            self.advance()
+            self.expect_newline()
+            return ast.Pass(line=line, col=col)
         if self.at_kw("break"):
             self.advance()
             self.expect_newline()

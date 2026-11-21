@@ -157,10 +157,12 @@ matches. This is a simplified form of Rust's drop elaboration.
 ### Borrow-checking scope
 
 The checker is deliberately conservative: borrows are block- or
-statement-scoped, cannot be stored in aggregates and cannot be returned. This
-eliminates whole-program lifetime inference while still catching the aliasing
-bugs that matter inside a function. Explicit lifetimes are the planned path
-beyond this boundary.
+statement-scoped. References may be stored in aggregates, and a view can be
+returned when every reference in it derives from the function's single
+reference parameter. Views cannot be rebound, escape through a nested closure,
+or outlive their source's block. This avoids whole-program lifetime inference
+while still catching the aliasing bugs that matter inside a function. Explicit
+lifetimes are the planned path beyond this boundary.
 
 ## Known trade-offs
 

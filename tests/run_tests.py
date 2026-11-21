@@ -717,6 +717,150 @@ fn main() -> i32:
 """,
         "1" + chr(10) + "2" + chr(10),
     ),
+    (
+        "returnable-views",
+        """
+struct View:
+    r: &i64
+    n: i64
+
+struct P:
+    x: i64
+
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.x, n: self.x }
+
+fn make(x: &i64) -> View:
+    let v = View { r: x, n: 7 }
+    return v
+
+fn main() -> i32:
+    let p = P { x: 41 }
+    let a = p.view()
+    print(*a.r)
+    print(a.n)
+    let b = make(&p.x)
+    print(*b.r)
+    return 0
+""",
+        "41" + chr(10) + "41" + chr(10) + "41" + chr(10),
+    ),
+    (
+        "supertrait-dispatch",
+        """
+trait Named:
+    fn name(&self) -> String
+
+trait Greet: Named:
+    fn greet(&self) -> String:
+        return "hello, " + self.name()
+
+struct P:
+    n: String
+
+impl Named for P:
+    fn name(&self) -> String:
+        return self.n.clone()
+
+impl Greet for P:
+    pass
+
+fn describe<T: Greet>(x: &T) -> String:
+    return x.greet() + " / " + x.name()
+
+fn main() -> i32:
+    let p = P { n: "atrat" }
+    print(describe(&p))
+    let d: &dyn Greet = &p
+    print(d.greet())
+    let b: Box<dyn Greet> = box(P { n: "box" })
+    print(b.name())
+    return 0
+""",
+        "hello, atrat / atrat" + chr(10) + "hello, atrat" + chr(10)
+        + "box" + chr(10),
+    ),
+    (
+        "box-dyn-ownership",
+        """
+trait Counter:
+    fn bump(&mut self) -> i64
+    fn value(&self) -> i64
+
+struct C:
+    n: i64
+    tag: String
+
+impl Counter for C:
+    fn bump(&mut self) -> i64:
+        self.n += 1
+        return self.n
+    fn value(&self) -> i64:
+        return self.n
+
+fn main() -> i32:
+    var c: Box<dyn Counter> = box(C { n: 0, tag: "c" })
+    print(c.bump())
+    print(c.bump())
+    let moved = c
+    print(moved.value())
+    var list: List<Box<dyn Counter>> = [box(C { n: 10, tag: "x" })]
+    list.push(box(C { n: 20, tag: "y" }))
+    print((&list[0]).value())
+    print((&list[1]).value())
+    let p = &mut list[0]
+    print(p.bump())
+    return 0
+""",
+        "1" + chr(10) + "2" + chr(10) + "2" + chr(10) + "10" + chr(10)
+        + "20" + chr(10) + "11" + chr(10),
+    ),
+    (
+        "box-dyn-from-local",
+        """
+trait Show:
+    fn show(&self) -> String
+
+struct P:
+    n: String
+
+impl Show for P:
+    fn show(&self) -> String:
+        return self.n.clone()
+
+fn make() -> Box<P>:
+    return box(P { n: "made" })
+
+fn make_dyn() -> Box<dyn Show>:
+    return box(P { n: "dyn" })
+
+fn main() -> i32:
+    let b = box(P { n: "local" })
+    let d: Box<dyn Show> = b
+    print(d.show())
+    let e: Box<dyn Show> = make()
+    print(e.show())
+    print(make_dyn().show())
+    return 0
+""",
+        "local" + chr(10) + "made" + chr(10) + "dyn" + chr(10),
+    ),
+    (
+        "pass-statement",
+        """
+fn main() -> i32:
+    pass
+    let x = 1
+    if x == 1:
+        pass
+    else:
+        print("no")
+    print(x)
+    return 0
+""",
+        "1" + chr(10),
+    ),
 ]
 
 FAIL_CASES = [
@@ -1010,6 +1154,106 @@ fn main() -> i32:
     let s = "hello".clone()
     let f = || s.len()
     print(s)
+    return 0
+""",
+        "borrow error",
+        "use of moved value",
+    ),
+    (
+        "view-local-escape",
+        """
+struct View:
+    r: &i64
+
+fn bad(x: &i64) -> View:
+    let y = 1
+    return View { r: &y }
+
+fn main() -> i32:
+    return 0
+""",
+        "borrow error",
+        "returned borrow must be derived from",
+    ),
+    (
+        "supertrait-missing-parent-impl",
+        """
+trait Named:
+    fn name(&self) -> String
+
+trait Greet: Named:
+    fn greet(&self) -> String
+
+struct P:
+    n: String
+
+impl Greet for P:
+    fn greet(&self) -> String:
+        return "hi"
+
+fn describe<T: Greet>(x: &T) -> String:
+    return x.greet()
+
+fn main() -> i32:
+    let p = P { n: "x" }
+    print(describe(&p))
+    return 0
+""",
+        "type error",
+        "does not implement trait `Named`",
+    ),
+    (
+        "unknown-supertrait",
+        """
+trait Child: Missing:
+    fn f(&self) -> i64
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "unknown supertrait",
+    ),
+    (
+        "box-dyn-coerced-move",
+        """
+trait Show:
+    fn show(&self) -> String
+
+struct P:
+    n: String
+
+impl Show for P:
+    fn show(&self) -> String:
+        return self.n.clone()
+
+fn main() -> i32:
+    let b = box(P { n: "x" })
+    let d: Box<dyn Show> = b
+    let c = b
+    print(d.show())
+    return 0
+""",
+        "borrow error",
+        "use of moved value",
+    ),
+    (
+        "box-dyn-use-after-move",
+        """
+trait Show:
+    fn show(&self) -> String
+
+struct P:
+    n: String
+
+impl Show for P:
+    fn show(&self) -> String:
+        return self.n.clone()
+
+fn main() -> i32:
+    let d: Box<dyn Show> = box(P { n: "x" })
+    let e = d
+    print(d.show())
     return 0
 """,
         "borrow error",
