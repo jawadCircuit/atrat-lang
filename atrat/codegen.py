@@ -1614,7 +1614,9 @@ static inline void atr_list_{key}_free({cname}* self) {{
         if isinstance(e, (ast.Name, ast.Field, ast.Index)):
             return f"(&({self.emit_expr(e, consume=False)}))"
         if isinstance(e, ast.Deref):
-            return f"({self.emit_expr(e, consume=False)})"
+            # `emit_expr` for a dereference produces a value/lvalue, not a
+            # pointer. Address-taking callers need the address of that place.
+            return f"(&({self.emit_expr(e, consume=False)}))"
         return None
 
     def emit_binary(self, e) -> str:
@@ -1936,7 +1938,8 @@ static inline void atr_list_{key}_free({cname}* self) {{
         c = self.ctype(et)
         info = self.m.enums[et.name]
         names = [v[0] for v in info.variants]
-        consumes = method in ("unwrap", "expect", "unwrap_or", "ok", "err", "ok_or")
+        consumes = method in ("unwrap", "expect", "unwrap_or", "ok", "err",
+                              "ok_or", "unwrap_err")
         if is_ref:
             addr = self.emit_expr(base, consume=False)
         else:
@@ -1962,6 +1965,12 @@ static inline void atr_list_{key}_free({cname}* self) {{
             bad = (drop_bad + " ") if drop_bad else ""
             return (f"({{ {c}* _p = {addr}; if (_p->tag != {ok_i}) {{ {bad}"
                     f"atr_panic_str({msg}); }} _p->u.V_{ok_name}.v0; }})")
+        if method == "unwrap_err":
+            msg = "called unwrap_err on an Ok value"
+            drop_ok = self._drop_enum_variant(et, ok_name)
+            okdrop = (drop_ok + " ") if drop_ok else ""
+            return (f"({{ {c}* _p = {addr}; if (_p->tag != {bad_i}) {{ {okdrop}"
+                    f'atr_panic("{msg}"); }} _p->u.V_{bad_name}.v0; }})')
         if method == "unwrap_or":
             tmp = self.temp("en")
             base_pre = list(self.pre)
@@ -2311,13 +2320,11 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 pt = self.concrete(subst(vt, mp))
                 pex = f"({vex}).u.V_{pat.variant}.v{i}"
                 want_owns = owns and not self.is_copy(pt)
-                if isinstance(sub, ast.PatVariant) and want_owns:
-                    ntmp = f"v_pat_{self.temp_n}"
-                    self.temp_n += 1
-                    decls.append(f"{self.ctype(pt)} {ntmp} = {pex};")
-                    self.emit_pattern(sub, ntmp, pt, conds, decls, True)
-                else:
-                    self.emit_pattern(sub, pex, pt, conds, decls, want_owns)
+                # Conditions must be evaluable before the arm body, so nested
+                # patterns refer to the parent union path directly. Declaring a
+                # temporary inside `decls` would make the `if` condition refer
+                # to an undeclared variable.
+                self.emit_pattern(sub, pex, pt, conds, decls, want_owns)
             return
         raise CodegenError("internal: unknown pattern")
 

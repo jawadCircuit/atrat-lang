@@ -1,0 +1,57 @@
+# Deterministic destruction: Box, Rc, nested enums, early returns and loops.
+# The strong counts printed here make leaks and double-drops visible.
+
+struct Bag:
+    name: String
+    shared: Rc<i64>
+    boxed: Box<i64>
+    maybe: Option<Rc<i64>>
+
+fn early(flag: bool, r: Rc<i64>) -> i64:
+    let a: Option<Rc<i64>> = Some(r.clone())
+    let b: Option<Box<Rc<i64>>> = Some(box(r.clone()))
+    if flag:
+        drop(a)
+        return 1
+    drop(b)
+    return 2
+
+fn nested(r: Rc<i64>) -> Option<Result<Box<i64>, Rc<i64>>>:
+    return Some(Ok(box(7)))
+
+fn consume(x: Option<Result<Box<i64>, Rc<i64>>>) -> i64:
+    let out = match x:
+        Some(Ok(b)) -> *b
+        Some(Err(e)) -> *e
+        None -> -1
+    return out
+
+fn main() -> i32:
+    let r = rc(5)
+    let bag = Bag {
+        name: "bag".clone(),
+        shared: r.clone(),
+        boxed: box(3),
+        maybe: Some(r.clone()),
+    }
+    print(r.strong_count())
+    drop(bag)
+    print(r.strong_count())
+
+    print(early(true, r.clone()))
+    print(r.strong_count())
+    print(early(false, r.clone()))
+    print(r.strong_count())
+
+    let n = nested(r.clone())
+    print(consume(n))
+    print(r.strong_count())
+
+    var i = 0
+    while i < 3:
+        let t: Option<Rc<i64>> = Some(r.clone())
+        if i == 1:
+            drop(t)
+        i += 1
+    print(r.strong_count())
+    return 0

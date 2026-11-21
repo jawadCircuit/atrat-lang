@@ -492,7 +492,7 @@ List methods: `len`, `is_empty`, `push`, `pop`, `get`, `set`, `clear`.
 `Option<T>` methods: `is_some`, `is_none`, `unwrap`, `expect(msg)`,
 `unwrap_or(default)`, `ok_or(err)`.
 `Result<T, E>` methods: `is_ok`, `is_err`, `unwrap`, `expect(msg)`,
-`unwrap_or(default)`, `ok`, `err`.
+`unwrap_err`, `unwrap_or(default)`, `ok`, `err`.
 
 `pop()` and `get(i)` return `Option<T>`. `get` requires `Copy` elements.
 
@@ -503,29 +503,39 @@ List methods: `len`, `is_empty`, `push`, `pop`, `get`, `set`, `clear`.
 - The runtime is embedded and consists of a small string buffer, panic,
   allocation and formatting helpers.
 - Every value lives on the stack or inline in its owner unless it is explicitly
-  a `List`/`String` buffer on the heap.
+  a `List`/`String`/`Box`/`Rc` allocation.
+- Struct fields cannot be initialized one at a time on an uninitialized local;
+  use a complete literal or assign the whole value. This rules out partially
+  initialized structs in safe code.
 - Non-`Copy` locals carry a compile-time-known `alive` flag in C when their
   moves are conditional, so drops are exact and double-frees cannot occur.
 - `atrc emit-c` prints the whole generated translation unit.
 
 ## 11. Diagnostics
 
-Errors include file, line, column, a caret and often a hint:
+Errors include a stable code, file, line, column, a caret, a hint and sometimes
+a note pointing at an earlier borrow:
 
 ```
-app.atr:4:11: borrow error: use of moved value `s`
-  |
-4 |     print(s)
-  |           ^
-  = hint: the value was moved earlier; clone it or borrow instead
+error[E0303]: borrow error: use of moved value `s`
+  --> app.atr:4:11
+   |
+ 4 |     print(s)
+   |           ^
+   = help: the value was moved earlier; clone it or borrow instead
 ```
 
 Error kinds: `lex error`, `parse error`, `type error`, `borrow error`,
-`codegen error`.
+`codegen error`. See `docs/DIAGNOSTICS.md` for the code table.
 
 Runtime traps (these abort with `atrat panic: ...`): list index out of bounds,
 division/modulo by zero, integer overflow in `INT_MIN / -1`, shift out of range,
 failed `assert`, explicit `panic`, and allocation failure.
+
+**Panics abort; Atrat does not unwind.** Locals are not dropped when a panic
+occurs, so destructors cannot be used for panic cleanup. Normal returns,
+branches, loops and explicit `drop` do run destructors exactly once. This is a
+known limitation, not Rust-style unwinding.
 
 ## 12. Grammar sketch
 

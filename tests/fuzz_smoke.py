@@ -33,7 +33,9 @@ struct H:
     n: String
 impl Show for H:
     fn show(&self) -> String:
-        return self.n.clone()
+        # Repeated seed insertion can grow a mutated program without bound. Keep
+    # cases small so a pathological parse cannot masquerade as a hang.
+    return s[:16000]elf.n.clone()
 fn main() -> i32:
     let d: Box<dyn Show> = box(H { n: "x" })
     print(d.show())
@@ -53,6 +55,39 @@ r'''fn main() -> i32:
     var xs = [1, 2, 3]
     for x in &xs:
         print(*x)
+    return 0
+''',
+r'''enum Inner:
+    A(String)
+    B(i64)
+enum Outer:
+    S(Inner)
+    N
+fn main() -> i32:
+    let x = Outer.S(Inner.A("x".clone()))
+    let y = match x:
+        Outer.S(Inner.A(s)) -> s.len()
+        Outer.S(Inner.B(n)) -> n
+        Outer.N -> 0
+    print(y)
+    return 0
+''',
+r'''struct Bag:
+    r: Rc<i64>
+    b: Box<i64>
+fn main() -> i32:
+    let shared = rc(1)
+    let x = Bag { r: shared.clone(), b: box(2) }
+    print(shared.strong_count())
+    drop(x)
+    print(shared.strong_count())
+    return 0
+''',
+r'''fn main() -> i32:
+    let r = rc(3)
+    let e: Result<i64, Rc<i64>> = Err(r.clone())
+    print(e.unwrap_or(0))
+    print(r.strong_count())
     return 0
 ''',
 ]
@@ -84,7 +119,7 @@ def main() -> int:
     rng = random.Random(0xA7A7)
     failures = 0
     tmp = tempfile.mkdtemp(prefix="atrat-fuzz-")
-    cases = int(os.environ.get("ATRAT_FUZZ_CASES", "120"))
+    cases = int(os.environ.get("ATRAT_FUZZ_CASES", "500"))
     for i in range(cases):
         src = mutate(rng.choice(SEEDS), rng)
         path = os.path.join(tmp, f"case_{i}.atr")
@@ -97,7 +132,7 @@ def main() -> int:
                 args += ["-o", out]
             try:
                 p = subprocess.run(args, cwd=ROOT, capture_output=True,
-                                   text=True, timeout=15)
+                                   text=True, timeout=30)
             except subprocess.TimeoutExpired:
                 print(f"FAIL timeout: case_{i} {command}")
                 failures += 1

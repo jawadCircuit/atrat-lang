@@ -1005,6 +1005,36 @@ fn main() -> i32:
         "nested" + chr(10) + "nested" + chr(10),
     ),
     (
+        'destruction-matrix',
+        'struct Owned:\n    name: String\n    r: Rc<i64>\n    b: Box<i64>\n    extra: Option<Rc<i64>>\n\nfn early(flag: bool, r: Rc<i64>) -> i64:\n    let a: Option<Rc<i64>> = Some(r.clone())\n    let b: Option<Box<Rc<i64>>> = Some(box(r.clone()))\n    let c: Option<Result<Box<i64>, Rc<i64>>> = Some(Ok(box(1)))\n    if flag:\n        drop(a)\n        return 1\n    drop(b)\n    drop(c)\n    return 2\n\nfn make_nested(r: Rc<i64>) -> Option<Result<Box<i64>, Rc<i64>>>:\n    return Some(Ok(box(7)))\n\nfn use_nested(x: Option<Result<Box<i64>, Rc<i64>>>) -> i64:\n    let out = match x:\n        Some(Ok(b)) -> *b\n        Some(Err(e)) -> *e\n        None -> -1\n    return out\n\nfn main() -> i32:\n    let r = rc(5)\n    let h = Owned { name: "h".clone(), r: r.clone(), b: box(3), extra: Some(r.clone()) }\n    print(r.strong_count())\n    drop(h)\n    print(r.strong_count())\n\n    print(early(true, r.clone()))\n    print(r.strong_count())\n    print(early(false, r.clone()))\n    print(r.strong_count())\n\n    let n = make_nested(r.clone())\n    print(r.strong_count())\n    print(use_nested(n))\n    print(r.strong_count())\n\n    var i = 0\n    while i < 3:\n        let t: Option<Rc<i64>> = Some(r.clone())\n        if i == 1:\n            drop(t)\n        i += 1\n    print(r.strong_count())\n\n    let e: Result<i64, Rc<i64>> = Err(r.clone())\n    print(r.strong_count())\n    print(e.unwrap_or(0))\n    print(r.strong_count())\n\n    let eok: Result<Rc<i64>, String> = Ok(r.clone())\n    print(r.strong_count())\n    let oe = eok.err()\n    print(oe.is_none())\n    print(r.strong_count())\n    return 0\n',
+        '3\n1\n1\n1\n2\n1\n1\n7\n1\n1\n2\n0\n1\n2\ntrue\n1\n',
+    ),
+    (
+        'nested-match-codegen',
+        'enum Inner:\n    A(i64)\n    B(i64)\n\nenum Outer:\n    S(Inner)\n    N\n\nfn main() -> i32:\n    let x = Outer.S(Inner.A(3))\n    let y = match x:\n        Outer.S(Inner.A(n)) -> n\n        Outer.S(Inner.B(n)) -> -n\n        Outer.N -> 0\n    print(y)\n\n    let z = Outer.S(Inner.B(4))\n    let w = match z:\n        Outer.S(Inner.A(n)) -> n\n        Outer.S(Inner.B(n)) -> -n\n        Outer.N -> 0\n    print(w)\n    return 0\n',
+        '3\n-4\n',
+    ),
+    (
+        'ownership-enum-transfer',
+        'struct Holder:\n    name: String\n    r: Rc<i64>\n    b: Box<i64>\n    maybe: Option<Rc<i64>>\n\nfn make_opt_box(v: i64) -> Option<Box<i64>>:\n    return Some(box(v))\n\nfn consume_opt_box(o: Option<Box<i64>>) -> i64:\n    let out = match o:\n        Some(b) -> *b\n        None -> -1\n    return out\n\nfn pass_opt_box(o: Option<Box<i64>>) -> Option<Box<i64>>:\n    return o\n\nfn make_res_box(v: i64) -> Result<Box<i64>, String>:\n    if v < 0:\n        return Err("negative".clone())\n    return Ok(box(v))\n\nfn consume_res_box(r: Result<Box<i64>, String>) -> i64:\n    let out = match r:\n        Ok(b) -> *b\n        Err(e) -> -1\n    return out\n\nfn make_opt_rc(v: i64) -> Option<Rc<i64>>:\n    return Some(rc(v))\n\nfn main() -> i32:\n    let o = make_opt_box(11)\n    print(consume_opt_box(o))\n    let p = pass_opt_box(make_opt_box(12))\n    print(consume_opt_box(p))\n    print(consume_opt_box(None))\n\n    let r = make_res_box(13)\n    print(consume_res_box(r))\n    let bad = make_res_box(-1)\n    print(consume_res_box(bad))\n\n    let shared = rc(99)\n    let a = make_opt_rc(1)\n    let b: Option<Rc<i64>> = Some(shared.clone())\n    print(shared.strong_count())\n    drop(a)\n    print(shared.strong_count())\n    drop(b)\n    print(shared.strong_count())\n\n    let h = Holder { name: "h".clone(), r: shared.clone(), b: box(5), maybe: Some(shared.clone()) }\n    print(shared.strong_count())\n    drop(h)\n    print(shared.strong_count())\n    return 0\n',
+        '11\n12\n-1\n13\n-1\n2\n2\n1\n3\n1\n',
+    ),
+    (
+        'unwrap-err',
+        'fn main() -> i32:\n    let r = rc(4)\n    let e: Result<i64, Rc<i64>> = Err(r.clone())\n    print(r.strong_count())\n    let got = e.unwrap_err()\n    print(r.strong_count())\n    print(*got)\n    drop(got)\n    print(r.strong_count())\n\n    let ok: Result<i64, String> = Ok(7)\n    print(ok.unwrap())\n    return 0\n',
+        '2\n2\n4\n1\n7\n',
+    ),
+    (
+        'box-string-methods',
+        'fn main() -> i32:\n    let b: Box<String> = box("owned".clone())\n    print((*b).len())\n    print(len(*b))\n    print((*b).clone())\n    return 0\n',
+        '5\n5\nowned\n',
+    ),
+    (
+        'destruction-assignment',
+        'struct Holder:\n    r: Rc<i64>\n    b: Box<i64>\n    maybe: Option<Rc<i64>>\n\nfn main() -> i32:\n    let base = rc(1)\n    let other = rc(2)\n    var h = Holder { r: base.clone(), b: box(9), maybe: Some(other.clone()) }\n    print(base.strong_count())\n    print(other.strong_count())\n    h.r = rc(3)\n    print(base.strong_count())\n    h.maybe = None\n    print(other.strong_count())\n    h.b = box(10)\n    print(*h.b)\n    print(*h.r)\n    drop(h)\n\n    var o: Option<Rc<i64>> = Some(other.clone())\n    print(other.strong_count())\n    o = None\n    print(other.strong_count())\n    o = Some(other.clone())\n    print(other.strong_count())\n    o = Some(rc(4))\n    print(other.strong_count())\n    print("done")\n    return 0\n',
+        '2\n2\n1\n1\n10\n3\n2\n1\n2\n1\ndone\n',
+    ),
+    (
         "enum-method-payload-drop",
         """
 fn main() -> i32:
@@ -1125,6 +1155,18 @@ fn main() -> i32:
 ]
 
 FAIL_CASES = [
+    (
+        "partial-init-field",
+        'struct P:\n    a: String\n    b: String\n\nfn main() -> i32:\n    var p: P\n    p.a = "x".clone()\n    p.b = "y".clone()\n    print(p.a)\n    return 0\n',
+        "borrow error",
+        "before it is initialized",
+    ),
+    (
+        "partial-init-drop",
+        'struct P:\n    s: String\n\nfn main() -> i32:\n    let p: P\n    drop(p)\n    return 0\n',
+        "borrow error",
+        "before it is initialized",
+    ),
     (
         "use-after-move",
         """
@@ -1865,6 +1907,41 @@ fn main() -> i32:
 ]
 
 
+PANIC_CASES = [
+    (
+        "panic-unwrap-none",
+        """
+fn main() -> i32:
+    let o: Option<Box<String>> = None
+    let b = o.unwrap()
+    print("unreachable {b}")
+    return 0
+""",
+        "called unwrap on None",
+    ),
+    (
+        "panic-assert",
+        """
+fn main() -> i32:
+    assert(false, "boom")
+    print("unreachable")
+    return 0
+""",
+        "boom",
+    ),
+    (
+        "panic-div-zero",
+        """
+fn main() -> i32:
+    let z = 0
+    print(10 / z)
+    print("unreachable")
+    return 0
+""",
+        "integer division by zero",
+    ),
+]
+
 MULTI_CASES = [
     (
         "modules",
@@ -1963,12 +2040,36 @@ def main() -> int:
             print(f"FAIL {name}: expected rejection, but it type-checked")
             failed += 1
         elif kind not in combined or needle not in combined:
-            print(f"FAIL {name}: wrong diagnostic\n{combined}")
+            print(f"FAIL {name}: wrong diagnostic")
+            print(combined)
             failed += 1
         else:
             print(f"ok   {name} (rejected)")
 
-    print(f"\n{total - failed}/{total} passed")
+    for name, src, needle in PANIC_CASES:
+        total += 1
+        path = os.path.join(tmp, "panic_" + name + ".atr")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(src)
+        exe = os.path.join(tmp, "panic_" + name + (".exe" if os.name == "nt" else ""))
+        built = run([sys.executable, ATRC, "build", path, "-o", exe])
+        if built.returncode != 0:
+            print(f"FAIL {name}: build failed")
+            print(built.stderr)
+            failed += 1
+            continue
+        proc = run([exe])
+        combined = proc.stdout + proc.stderr
+        if proc.returncode == 0 or needle not in combined or "unreachable" in proc.stdout:
+            print(f"FAIL {name}: expected a fatal panic, got exit {proc.returncode}")
+            print(f"  stdout: {proc.stdout!r}")
+            print(f"  stderr: {proc.stderr!r}")
+            failed += 1
+        else:
+            print(f"ok   {name} (panic aborts)")
+
+    print()
+    print(f"{total - failed}/{total} passed")
     return 0 if failed == 0 else 1
 
 

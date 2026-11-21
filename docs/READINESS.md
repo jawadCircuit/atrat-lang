@@ -14,20 +14,42 @@ remaining blockers are listed with severity and an honest estimate.
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Safe-code memory safety | **Partial** | Ownership, borrows, returned-borrow tracking, exact drops, init analysis, bounds checks; no formal proof, no fuzzing campaign. |
+| Safe-code memory safety | **Partial** | Ownership, borrows, returned-borrow tracking, exact drops on normal control flow, init analysis, bounds checks; panics do not unwind; no formal proof or large-scale fuzzing campaign. |
 | Defined arithmetic | **Yes** | Division/modulo/shift trap; `-fwrapv` gives defined wrapping. |
 | Language stability | **No** | No 1.0 spec, no semver promise; breaking changes expected. |
 | Type system completeness | **Partial** | HM + ADTs + generics + generic impls + traits + defaults + supertraits + returned views + `&dyn`/`Box<dyn>`; no explicit lifetime parameters or associated types. |
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 92 end-to-end cases incl. 45 negative tests; mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 103 cases incl. 47 compile-fail and 3 panic-path tests; 500-case mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
-| Documentation | **Good for alpha** | Reference, design notes, readiness audit, examples. |
+| Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.3 added
+
+- Fixed nested enum `match` patterns emitting C that referenced a pattern
+  temporary before its declaration.
+- Fixed address-taking through a dereference (`(*boxed_string).len()` and
+  `len(*boxed_string)`) producing invalid C.
+- Added `Result::unwrap_err`, with the same drop-the-other-payload rule as the
+  other consuming enum methods.
+- Added destruction tests for nested `Option<Result<...>>` payloads, structs
+  containing `Box` and `Rc`, early returns, loops, assignment, and exactly-once
+  cleanup using `Rc::strong_count`.
+- Added ownership-transfer tests for `Option<Box<T>>`, `Result<Box<T>, E>` and
+  `Option<Rc<T>>` across argument passing and returns.
+- Added diagnostic notes that point back to the first borrow location.
+- Added three panic-path tests: `unwrap`, `assert` and division by zero abort
+  before subsequent code. Panic still does not unwind, so local destructors do
+  not run on a panic path.
+- Added `docs/STDLIB.md`, `docs/REGRESSIONS.md` and `examples/lifecycle.atr`.
+- Increased mutation fuzz smoke to 500 generated cases (1,000 check/emission
+  invocations) and added lifecycle scenarios to the sanitizer and matrix jobs.
+- 103/103 end-to-end tests.
 
 ## What 0.8.2 added
 
@@ -150,8 +172,9 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | No visibility, namespacing, separate compilation or package boundaries. | 3–5 weeks |
-| C4 | No formal soundness evidence | The checker is hand-written; 91 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No formal soundness evidence | The checker is hand-written; 103 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
+| C6 | Panic does not unwind | Panics abort `main`; locals are not dropped during a panic. Resource cleanup that must happen on failure needs an explicit design. | 2–4 weeks for a scoped unwinding model, more for full safety |
 
 ### High
 
@@ -164,13 +187,13 @@ remaining blockers are listed with severity and an honest estimate.
 | H5 | C backend + GNU extensions | MSVC unsupported; cross-compilation and ABI control are ad hoc. |
 | H6 | Error recovery is limited | One error per run; no incremental checking. |
 | H7 | Python compiler performance | Fine for small programs; slow for large codebases. |
-| H8 | No capturing closures | Callbacks cannot hold state; iterator adapters are impossible. |
+| H8 | Nested/returning closures are unsupported | Capturing closures work, but nested and returning closures are rejected; iterator adapters are limited. |
 | H9 | Shared ownership is read-only | `Rc<T>` exists, but no `Arc`, `Mutex` or interior mutability. |
 
 ### Medium
 
 - No pattern guards, or-patterns, range patterns, destructuring `let`.
-- Closures cannot capture their environment yet.
+- Closures cannot be nested or returned yet; capturing closures themselves work.
 - No slices; `List<T>` is the only sequence.
 - No overflow-checked arithmetic mode (only wrapping + traps for div/shift).
 - ASan/UBSan support exists via `ATRAT_CFLAGS`, but is unavailable in the local MinGW toolchain; CI runs it on Linux.
@@ -204,15 +227,34 @@ Atrat can call itself production-ready when all of these are true:
 
 None of gates 3–6 and 8–11 are met today. Gates 1, 2, 7 and 9 are partially met.
 
+## Realistic 1.0 estimate
+
+This is an engineering estimate, not a promise. It assumes the current
+single-maintainer project continues and that "production ready" means the gates
+below, not merely "the demo compiles". The gates are listed above.
+
+| Scope | Full-time effort | Calendar estimate from Nov 2026 |
+| --- | --- | --- |
+| Usable alpha for one team's small tools | 3–6 months | mid/late 2027 |
+| Beta: lifetimes, modules, panic cleanup, core collections, formatter/LSP basics | 9–15 months | late 2027–early 2028 |
+| Credible 1.0 candidate: stdlib, tooling, fuzzing, security review, 3 platforms, external users | 18–36 months | mid 2028–late 2029 |
+| Comfortable production 1.0 with ecosystem and support | 30–48+ months | 2029–2030 |
+
+At part-time effort (roughly 10–15 hours/week), multiply the calendar ranges by
+2–3: a credible 1.0 is a 2029–2031 project, not a 2026–2027 one.
+
+The largest uncertainty is not the parser or code generator. It is the work that
+turns a compiler into a platform: lifetime/escape semantics, a real standard
+library, module/package boundaries, panic cleanup, tooling, security response,
+and enough external use to find the bugs the current 103 tests cannot.
+
 ## Recommended path
 
 | Milestone | Scope | Outcome |
 | --- | --- | --- |
-| 0.3 | Modules + package layout, `atrc fmt` (basic), error recovery | Usable for multi-file toys |
-| 0.4 | Traits + dictionary passing, `Iterator`, stdlib collections | Real generic libraries |
-| 0.5 | Lifetimes/escape analysis, slices, closures | Real APIs |
-| 0.6 | LSP, debug source maps, sanitizer CI, fuzzing | Team-usable |
-| 1.0 | Spec freeze, semver, 3-platform support, security audit | Production candidate |
+| 0.8.x patch releases | Destruction, ownership-transfer, fuzz and diagnostics hardening; usability fixes only | Safer alpha |
+| Pre-1.0 stabilization | Lifetimes/escape analysis, associated types, modules/visibility, panic cleanup, stdlib, formatter/LSP | Beta candidate |
+| 1.0 | Spec freeze, semver, 3-platform support, security audit, external users | Production candidate |
 
 Until then: label releases **alpha**, pin versions, and do not run untrusted
 Atrat programs or trust `unsafe:` code with anything important.

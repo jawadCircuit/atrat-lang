@@ -37,7 +37,26 @@ def main() -> int:
     env.setdefault("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
     p = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "run_tests.py")],
                        cwd=ROOT, env=env)
-    return p.returncode
+    if p.returncode != 0:
+        return p.returncode
+    # Run the lifecycle examples explicitly too, so their strong-count output is
+    # checked under the sanitizers rather than only in the normal test suite.
+    with tempfile.TemporaryDirectory(prefix="atrat-san-ex-") as d:
+        for name in ("lifecycle.atr", "ownership.atr", "result.atr"):
+            exe = os.path.join(d, name.replace(".atr", ""))
+            built = subprocess.run([sys.executable, ATRC, "build",
+                                    os.path.join(ROOT, "examples", name),
+                                    "-o", exe], cwd=ROOT, env=env,
+                                   capture_output=True, text=True)
+            ran = subprocess.run([exe], capture_output=True, text=True) if built.returncode == 0 else None
+            if built.returncode != 0 or ran.returncode != 0:
+                print(f"FAIL sanitizer example {name}")
+                print((built.stderr or "")[:2000])
+                if ran is not None:
+                    print((ran.stderr or "")[:2000])
+                return 1
+    print("sanitizer lifecycle examples: ok")
+    return 0
 
 
 if __name__ == "__main__":

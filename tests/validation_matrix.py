@@ -10,7 +10,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ATRC = os.path.join(ROOT, "atrc")
-EXAMPLES = ["demo.atr", "readme.atr", "shapes.atr", "generics.atr"]
+EXAMPLES = ["demo.atr", "readme.atr", "shapes.atr", "generics.atr", "ownership.atr", "result.atr", "lifecycle.atr"]
 
 
 def run_case(path: str, opt: str, cc: str, tmp: str) -> tuple[int, str, str]:

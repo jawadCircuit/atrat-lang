@@ -1787,8 +1787,8 @@ class FnChecker:
 
         if isinstance(inner, TCon) and inner.name == "Result":
             ok_t, err_t = inner.args
-            if name in ("unwrap", "expect", "unwrap_or", "ok", "err")                     and isinstance(t, TRef):
-                moved = err_t if name == "ok" else ok_t
+            if name in ("unwrap", "expect", "unwrap_or", "ok", "err", "unwrap_err")                     and isinstance(t, TRef):
+                moved = err_t if name in ("ok", "unwrap_err") else ok_t
                 if not self.m.is_copy(moved):
                     self.err(f"cannot move a non-Copy value out of `{t.show()}`", e,
                              "borrow the payload with `match` or clone it first")
@@ -1817,6 +1817,12 @@ class FnChecker:
                 e.enum_elem = ok_t
                 e.enum_err = err_t
                 return ok_t
+            if name == "unwrap_err":
+                self.expect_arity(e, 0)
+                e.solved = ("enum_method", name)
+                e.enum_elem = ok_t
+                e.enum_err = err_t
+                return err_t
             if name == "ok":
                 self.expect_arity(e, 0)
                 e.solved = ("enum_method", name)
@@ -2380,8 +2386,9 @@ class BorrowChecker:
         self.loop_depth = 0
         self.unsafe = 0
 
-    def err(self, msg, node, hint=""):
-        raise BorrowError(msg, getattr(node, "line", 0), getattr(node, "col", 0), hint)
+    def err(self, msg, node, hint="", notes=None):
+        raise BorrowError(msg, getattr(node, "line", 0), getattr(node, "col", 0),
+                          hint, notes=notes)
 
     # -- scope ------------------------------------------------------------
     def push(self):
@@ -2459,7 +2466,8 @@ class BorrowChecker:
             if act:
                 b = act[0]
                 self.err(f"cannot {action} `{root}` while it is borrowed", node,
-                         f"the borrow is still alive (line {b.line})")
+                         "the borrow is still alive here",
+                         notes=[(b.line, f"borrow of `{root}` starts here")])
 
     def check_mut_receiver(self, recv, roots, node):
         rt = self.m.u.resolve_deep(getattr(recv, "ty", None) or UNIT)
@@ -2486,7 +2494,8 @@ class BorrowChecker:
             act = [b for b in self.active_on(root) if b is not ignore]
             if act:
                 self.err(f"cannot borrow `{root}` as mutable while it is already "
-                         f"borrowed", node, f"first borrow is on line {act[0].line}")
+                         f"borrowed", node, "wait until the first borrow ends",
+                         notes=[(act[0].line, f"first borrow of `{root}` starts here")])
 
     def clear_temps(self, mark: int):
         self.borrows = self.borrows[:mark] + [b for b in self.borrows[mark:]
@@ -2506,7 +2515,8 @@ class BorrowChecker:
         act = self.active_on(bv.name)
         if act:
             self.err(f"cannot move `{bv.name}` while it is borrowed", node,
-                     f"the borrow is on line {act[0].line}")
+                     "wait until the borrow ends, or clone the value",
+                     notes=[(act[0].line, f"borrow of `{bv.name}` starts here")])
         bv.moved = True
 
     # -- places -----------------------------------------------------------
@@ -2558,7 +2568,8 @@ class BorrowChecker:
             for b in self.active_on(root):
                 if b.mut and b is not ignore:
                     self.err(f"cannot read `{root}` while it is mutably borrowed",
-                             node, f"the mutable borrow starts on line {b.line}")
+                             node, "wait until the mutable borrow ends",
+                             notes=[(b.line, f"mutable borrow of `{root}` starts here")])
 
     def ref_borrow_of(self, e):
         """The borrow object that a reference expression itself carries."""

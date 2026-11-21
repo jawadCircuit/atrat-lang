@@ -34,12 +34,25 @@ error[E0301]: borrow error: returned borrow must be derived from `x`
 | `E0401` | Trait implementation/method conflict or missing requirement |
 
 Codes identify a category, not a guarantee that the wording will never improve.
-The human-readable message and `help:` line are part of the diagnostic too.
+The human-readable message, `help:` line and optional `note:` lines are part of
+the diagnostic too. Notes can point at the earlier borrow that caused a
+conflict:
+
+```text
+error[E0302]: borrow error: cannot assign to `x` while it is borrowed
+  --> app.atr:4:5
+   |
+ 4 |     x = 2
+   |     ^
+   = help: the borrow is still alive here
+   = note: borrow of `x` starts here (app.atr:3)
+```
 
 ## Principles
 
 - Point at the offending expression, not only at the enclosing function.
-- Mention the relevant earlier borrow line when one exists.
+- Mention the relevant earlier borrow line when one exists, with a mapped
+  `= note:` location.
 - Prefer a concrete repair: return an owned value, bind the owner first, use
   `var`, clone, or borrow instead of moving.
 - Reject uncertain unsafe cases rather than accepting them silently.

@@ -8,12 +8,14 @@ class AtratError(Exception):
 
     kind = "error"
 
-    def __init__(self, msg: str, line: int = 0, col: int = 0, hint: str = ""):
+    def __init__(self, msg: str, line: int = 0, col: int = 0, hint: str = "",
+                 notes: list[str] | None = None):
         super().__init__(msg)
         self.msg = msg
         self.line = line
         self.col = col
         self.hint = hint
+        self.notes = list(notes or [])
 
 
 class LexError(AtratError):

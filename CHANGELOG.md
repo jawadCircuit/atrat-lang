@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.3 — nested destruction and ownership transfer
+
+- Fixed nested enum `match` patterns emitting references to pattern temporaries
+  before their declaration; nested `Some(Ok(...))`/`Some(Err(...))` matches now
+  compile and run.
+- Fixed address-taking through a dereference, so `(*boxed_string).len()` and
+  `len(*boxed_string)` emit valid C.
+- Added `Result::unwrap_err()`; consuming enum methods drop the payload they do
+  not return.
+- Added lifecycle tests for nested `Option`/`Result` payloads, structs with
+  `Box`/`Rc`, early returns, loop cleanup, assignment and exactly-once
+  destruction via `Rc::strong_count`.
+- Added ownership-transfer tests for `Option<Box<T>>`, `Result<Box<T>, E>` and
+  `Option<Rc<T>>` through arguments and returns.
+- Added borrow notes in diagnostics, `docs/STDLIB.md`, `docs/REGRESSIONS.md` and
+  `examples/lifecycle.atr`.
+- Added panic-path tests proving `unwrap`, `assert` and division-by-zero abort
+  before subsequent code. Atrat still does not unwind, so local destructors are
+  **not** run on panic; this is documented as a known limitation.
+- Mutation fuzz smoke now runs 500 generated cases; sanitizer and optimisation
+  matrix jobs include lifecycle examples.
+- 103/103 end-to-end tests pass.
+
 ## 0.8.2 — enum payload cleanup
 
 - Fixed a memory leak in consuming `Option`/`Result` methods. `unwrap_or`,

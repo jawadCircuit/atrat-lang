@@ -145,6 +145,14 @@ def render_error(err: AtratError, src: str = "", filename: str = "") -> str:
         out.append("   | " + " " * (col - 1) + "^")
     if getattr(err, "hint", ""):
         out.append(f"   = help: {err.hint}")
+    for note in getattr(err, "notes", []):
+        if isinstance(note, tuple):
+            nline, ntext = note
+            loc = _SOURCES.locate(nline)
+            where = f"{loc[0]}:{loc[1]}" if loc is not None else f"line {nline}"
+            out.append(f"   = note: {ntext} ({where})")
+        else:
+            out.append(f"   = note: {note}")
     return "\n".join(out)
 
 

@@ -56,6 +56,7 @@ git clone https://github.com/jawadCircuit/atrat-lang.git
 cd atrat-lang
 
 ./atrc run examples/shapes.atr     # compile + run   (python atrc ... on Windows)
+./atrc run examples/lifecycle.atr  # Box/Rc/nested-enum destruction counts
 ./atrc build app.atr -o app        # native executable
 ./atrc check app.atr               # types + borrows only
 ./atrc emit-c app.atr              # inspect the generated C
@@ -85,7 +86,7 @@ point, and the generated C is available with `atrc emit-c`.
 | Modules / packaging / tooling | **Early** |
 | Production readiness | **No** |
 
-There are **92 end-to-end tests** covering successful programs, exact stdout,
+There are **103 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -194,6 +195,9 @@ atrat/
 examples/                runnable feature demos
 tests/run_tests.py       end-to-end compile/run/compile-fail suite
 docs/LANGUAGE.md         language reference
+docs/STDLIB.md           prelude, built-ins, ownership and panic rules
+docs/DIAGNOSTICS.md      error codes and diagnostic format
+docs/REGRESSIONS.md      minimized reproductions of fixed bugs
 docs/DESIGN.md           requirement-by-requirement design notes
 ```
 
@@ -205,7 +209,7 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **92/92** pass, including trait objects, supertraits, owned
+Currently **103/103** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised
@@ -222,13 +226,15 @@ iteration loop. On the development machine (MinGW-w64 gcc 16, `-O2`):
 | recursive `fib(32)` | 18.0 ms | 21.9 ms | 1.21x |
 | 200k string build/format/free | 45.5 ms | 41.6 ms | 0.91x |
 
-Run `python bench/bench.py`. The generated code is the C code you would have
-written, so the cost model is C's cost model. `atrc emit-c` is the proof.
+Run `python bench/bench.py`. These are micro-benchmarks only; the generated code
+is plain C, and `atrc emit-c` shows exactly what the backend produced.
 
 ## Documentation
 
 - [Language reference](docs/LANGUAGE.md)
 - [Diagnostics and error codes](docs/DIAGNOSTICS.md)
+- [Prelude and standard built-ins](docs/STDLIB.md)
+- [Regression reproductions](docs/REGRESSIONS.md)
 - [Design notes](docs/DESIGN.md)
 - [Production-readiness audit](docs/READINESS.md)
 - [Changelog](CHANGELOG.md)
