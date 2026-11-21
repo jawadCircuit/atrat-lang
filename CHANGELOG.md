@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2 — enum payload cleanup
+
+- Fixed a memory leak in consuming `Option`/`Result` methods. `unwrap_or`,
+  `ok` and `err` now drop the payload of the variant they do not return;
+  `unwrap`/`expect` drop the failing payload before panicking.
+- Added a `Rc` strong-count regression test for `Result<i64, Rc<i64>>`.
+- ASan/UBSan CI found the leak. 92/92 end-to-end tests pass.
+
 ## 0.8.1 — borrow provenance, diagnostics and validation
 
 ### Borrow checker

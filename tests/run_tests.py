@@ -1005,6 +1005,26 @@ fn main() -> i32:
         "nested" + chr(10) + "nested" + chr(10),
     ),
     (
+        "enum-method-payload-drop",
+        """
+fn main() -> i32:
+    let r = rc(7)
+    let e: Result<i64, Rc<i64>> = Err(r.clone())
+    print(r.strong_count())
+    print(e.unwrap_or(0))
+    print(r.strong_count())
+
+    let e2: Result<i64, Rc<i64>> = Err(r.clone())
+    print(r.strong_count())
+    let o = e2.ok()
+    print(o.is_none())
+    print(r.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "0" + chr(10) + "1" + chr(10)
+        + "2" + chr(10) + "true" + chr(10) + "1" + chr(10),
+    ),
+    (
         "rc-clone-count",
         """
 fn main() -> i32:

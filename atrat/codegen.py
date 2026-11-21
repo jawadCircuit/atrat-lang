@@ -1915,6 +1915,19 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 self.pending.remove(line)
         return f"(&{tmp})"
 
+    def _drop_enum_variant(self, et: TCon, variant: str) -> str:
+        info = self.m.enums.get(et.name)
+        if info is None:
+            return ""
+        mp = dict(zip(info.generics, et.args))
+        for vname, vtys in info.variants:
+            if vname == variant and len(vtys) == 1:
+                ft = self.concrete(subst(vtys[0], mp))
+                d = self.ensure_drop(ft)
+                if d:
+                    return f"{d}(&_p->u.V_{variant}.v0);"
+        return ""
+
     def emit_enum_method(self, e, method: str) -> str:
         base = e.callee.base
         rt = self.concrete(base.ty)
@@ -1939,12 +1952,16 @@ static inline void atr_list_{key}_free({cname}* self) {{
         if method == "unwrap":
             msg = ("called unwrap on an Err value" if et.name == "Result"
                    else "called unwrap on None")
-            return (f"({{ {c}* _p = {addr}; if (_p->tag != {ok_i}) "
-                    f'atr_panic("{msg}"); _p->u.V_{ok_name}.v0; }})')
+            drop_bad = self._drop_enum_variant(et, bad_name)
+            bad = (drop_bad + " ") if drop_bad else ""
+            return (f"({{ {c}* _p = {addr}; if (_p->tag != {ok_i}) {{ {bad}"
+                    f'atr_panic("{msg}"); }} _p->u.V_{ok_name}.v0; }})')
         if method == "expect":
             msg = self.str_view(e.args[0])
-            return (f"({{ {c}* _p = {addr}; if (_p->tag != {ok_i}) "
-                    f"atr_panic_str({msg}); _p->u.V_{ok_name}.v0; }})")
+            drop_bad = self._drop_enum_variant(et, bad_name)
+            bad = (drop_bad + " ") if drop_bad else ""
+            return (f"({{ {c}* _p = {addr}; if (_p->tag != {ok_i}) {{ {bad}"
+                    f"atr_panic_str({msg}); }} _p->u.V_{ok_name}.v0; }})")
         if method == "unwrap_or":
             tmp = self.temp("en")
             base_pre = list(self.pre)
@@ -1952,10 +1969,12 @@ static inline void atr_list_{key}_free({cname}* self) {{
             dflt = self.emit_expr(e.args[0], consume=True)
             dpre = list(self.pre)
             self.pre = base_pre
+            drop_bad = self._drop_enum_variant(et, bad_name)
+            bad = (drop_bad + " ") if drop_bad else ""
             return (f"({{ {' '.join(base_pre)} {c}* _p = {addr}; "
                     f"{self.ctype(self.concrete(e.ty))} {tmp}; "
                     f"if (_p->tag == {ok_i}) {{ {tmp} = _p->u.V_{ok_name}.v0; }} "
-                    f"else {{ {' '.join(dpre)} {tmp} = {dflt}; }} {tmp}; }})")
+                    f"else {{ {' '.join(dpre)} {tmp} = {dflt}; {bad}}} {tmp}; }})")
         if method == "ok_or":
             tmp = self.temp("en")
             base_pre = list(self.pre)
@@ -1978,9 +1997,12 @@ static inline void atr_list_{key}_free({cname}* self) {{
             some = self.mk_ctor(self.concrete(e.ty), "Some",
                                 [f"_p->u.V_{src_variant}.v0"])
             none = self.mk_ctor(self.concrete(e.ty), "None", [])
+            other = bad_name if method == "ok" else ok_name
+            drop_other = self._drop_enum_variant(et, other)
+            other_stmt = (drop_other + " ") if drop_other else ""
             return (f"({{ {c}* _p = {addr}; {rc} {tmp}; "
                     f"if (_p->tag == {src_i}) {{ {tmp} = {some}; }} "
-                    f"else {{ {tmp} = {none}; }} {tmp}; }})")
+                    f"else {{ {other_stmt}{tmp} = {none}; }} {tmp}; }})")
         raise CodegenError(f"internal: unknown enum method {method}")
 
     def emit_trait_method(self, e, trait: str, method: str) -> str:

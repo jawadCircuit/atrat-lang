@@ -21,13 +21,23 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 91 end-to-end cases incl. 45 negative tests; mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 92 end-to-end cases incl. 45 negative tests; mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Reference, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.2 added
+
+- Fixed a leak in consuming enum methods: `unwrap_or`, `ok` and `err` now drop
+  the non-returned non-`Copy` payload. `unwrap`/`expect` drop the failing
+  payload before panicking.
+- Added a strong-count regression test proving `Result<i64, Rc<i64>>` payloads
+  are released by `unwrap_or` and `ok`.
+- ASan/UBSan CI found this leak; the correction is included in this release.
+- 92/92 end-to-end tests.
 
 ## What 0.8.1 added
 
