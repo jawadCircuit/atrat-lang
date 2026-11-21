@@ -1,0 +1,25 @@
+# Ownership: moves, RAII drops and Option<String> extraction.
+
+fn take(s: String) -> i64:
+    s.len() as i64
+
+fn main() -> i32:
+    let a: String = "hello"
+    let b = a
+    print("b = {b}")
+    let n = take(b)
+    print("took {n} bytes")
+
+    var words = [to_str(1), to_str(22), to_str(333)]
+    words.push(to_str(4444))
+    print("words = {words}")
+    let popped = words.pop()
+    match popped:
+        Some(w) -> print("popped len = {w.len()}")
+        None -> print("empty")
+
+    let maybe: Option<String> = Some("owned")
+    match maybe:
+        Some(text) -> print("got {text}")
+        None -> print("none")
+    return 0

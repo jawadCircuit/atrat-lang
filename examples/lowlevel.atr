@@ -1,0 +1,26 @@
+# Raw pointers, inline assembly and C interop -- checked by default, opt-in to unsafe.
+
+extern fn getpid() -> i32
+
+fn main() -> i32:
+    var x: i64 = 41
+    unsafe:
+        let p = &mut x as *mut i64
+        *p = *p + 1
+        asm("nop")
+    print("x = {x}")
+
+    var total = 0
+    for i in 0..=10:
+        if i % 2 == 0:
+            continue
+        if i > 7:
+            break
+        total += i
+    print("odd total = {total}")
+
+    var n = 0
+    while n < 3:
+        n += 1
+    print("n = {n}, pid = {getpid()}")
+    return 0

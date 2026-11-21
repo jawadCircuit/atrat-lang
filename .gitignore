@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.exe
+*.o
+build/
+dist/
+*.egg-info/
+demo.c
+demo.o
+atrat_demo_output.txt

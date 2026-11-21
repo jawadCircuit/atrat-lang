@@ -1,0 +1,65 @@
+# demo.atr -- ADTs, ownership, generics, Result, methods, unsafe, asm.
+
+enum Status:
+    Pending
+    Shipped(i64)
+    Cancelled
+
+struct Order:
+    id: i64
+    customer: String
+    cents: i64
+    status: Status
+
+impl Order:
+    fn label(&self) -> String:
+        match self.status:
+            Pending -> "#{self.id} pending for {self.customer}"
+            Shipped(tracking) -> "#{self.id} shipped, tracking {tracking}"
+            Cancelled -> "#{self.id} cancelled"
+
+fn first_or<T>(xs: &List<T>, fallback: T) -> T:
+    if xs.len() > 0:
+        return xs[0]
+    fallback
+
+fn ship(id: i64, in_stock: bool) -> Result<i64, String>:
+    if !in_stock:
+        return Err("out of stock")
+    return Ok(9000 + id)
+
+fn main() -> i32:
+    var orders = [
+        Order { id: 1, customer: "ada", cents: 1250, status: Status.Pending },
+        Order { id: 2, customer: "grace", cents: 9900, status: Status.Shipped(4242) },
+    ]
+    orders.push(Order { id: 3, customer: "linus", cents: 500,
+                        status: Status.Cancelled })
+
+    var total = 0
+    for o in &orders:
+        print(o.label())
+        total += o.cents
+    print("orders = {orders.len()}, total = {total} cents")
+    let ids = [7, 8, 9]
+    print("first id = {first_or(&ids, 0)}")
+
+    let last = orders.pop()
+    match last:
+        Some(o) -> print("popped: {o.label()}")
+        None -> print("no orders")
+
+    match ship(7, true):
+        Ok(code) -> print("shipped with code {code}")
+        Err(reason) -> print("failed: {reason}")
+    match ship(7, false):
+        Ok(code) -> print("shipped with code {code}")
+        Err(reason) -> print("failed: {reason}")
+
+    var counter: i64 = 41
+    unsafe:
+        let p = &mut counter as *mut i64
+        *p = *p + 1
+        asm("nop")
+    print("counter via raw pointer = {counter}")
+    return 0

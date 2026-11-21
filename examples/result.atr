@@ -1,0 +1,21 @@
+# Result-based error handling without exceptions or null.
+
+fn div(a: i64, b: i64) -> Result<i64, String>:
+    if b == 0:
+        return Err("division by zero")
+    return Ok(a / b)
+
+fn show_div(a: i64, b: i64) -> String:
+    return match div(a, b):
+        Ok(v) -> "{a} / {b} = {v}"
+        Err(e) -> "{a} / {b} failed: {e}"
+
+fn main() -> i32:
+    print(show_div(10, 2))
+    print(show_div(7, 0))
+
+    let values = [1, 2, 3]
+    match values.get(3):
+        Some(v) -> print("got {v}")
+        None -> print("index 3 is missing")
+    return 0

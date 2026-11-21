@@ -1,0 +1,23 @@
+# Host services: files, environment, argv and time.
+
+fn main() -> i32:
+    let path = "atrat_demo_output.txt"
+    match write_file(path, "hello from Atrat\nline two\n"):
+        Ok(_) -> print("wrote {path}")
+        Err(e) -> print("write failed: {e}")
+
+    match read_file(path):
+        Ok(text) -> print("read {text.len()} bytes:\n{text}")
+        Err(e) -> print("read failed: {e}")
+
+    match env("PATH"):
+        Some(_) -> print("PATH is set")
+        None -> print("PATH is missing")
+
+    let argv = args()
+    print("argv count = {argv.len()}")
+    for a in &argv:
+        print("arg: {a}")
+
+    print("now_ms = {now_ms()}")
+    return 0

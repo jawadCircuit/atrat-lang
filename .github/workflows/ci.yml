@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Setup MSYS2 and MinGW (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+      - name: Put MinGW on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
+      - name: Install a C compiler (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc
+      - name: Check compiler is present
+        run: gcc --version
+      - name: End-to-end tests
+        run: python tests/run_tests.py
+      - name: Demo program
+        run: python atrc run examples/demo.atr
+      - name: Sanity-check generated C is warning-free
+        run: python atrc emit-c examples/demo.atr -o demo.c && gcc -std=gnu11 -O2 -Wall -Wextra -fwrapv -c demo.c -o demo.o

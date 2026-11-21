@@ -1,0 +1,25 @@
+# Recursion, match-as-expression and a C-speed hot loop.
+
+fn fib(n: i64) -> i64:
+    match n:
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+
+fn classify(n: i64) -> String:
+    let label = match n % 3:
+        0 -> "fizz"
+        1 -> "one"
+        _ -> "other"
+    return "{n}: {label}"
+
+fn main() -> i32:
+    print("fib(30) = {fib(30)}")
+    var acc: u64 = 0
+    for i in 0..100000000:
+        acc += 1
+    print("looped {acc} times")
+    print(classify(9))
+    print(classify(10))
+    print(classify(11))
+    return 0

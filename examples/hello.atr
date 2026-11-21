@@ -1,0 +1,6 @@
+# Hello, Atrat.
+fn main() -> i32:
+    let lang = "Atrat"
+    let answer = 6 * 7
+    print("hello from {lang}, answer = {answer}")
+    return 0
