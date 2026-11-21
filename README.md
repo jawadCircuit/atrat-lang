@@ -1,6 +1,6 @@
 # Atrat
 
-**A working alpha toward six hard requirements — not production-ready.**
+**A working alpha inspired by Rust, Python, Haskell, C, Lua and assembly — not production-ready.**
 
 > [!WARNING]
 > **Atrat is not fully functional yet.** It is a real compiler that builds and
@@ -22,18 +22,27 @@ deterministic memory management, a tiny C runtime, inline assembly and a
 C99 backend. The compiler is written in Python; programs compile to native
 executables through `gcc`/`clang`.
 
-Atrat (`.atr`) is a compiled systems language that aims to combine:
+Atrat is **not** a reimplementation of Rust, Python, Haskell, C, Lua or
+assembly, and it does not claim to match all of them. It is a separate language
+that borrows specific ideas from each:
 
-| Requirement | How Atrat delivers it |
+| Inspiration | What Atrat takes from it |
 | --- | --- |
-| **Rust-like memory safety** | Compile-time ownership + borrow checker, moves, RAII drops, bounds-checked lists, no null. `unsafe:` is an explicit, local escape hatch. |
-| **Python-like ease** | Significant-whitespace syntax, type inference (`let x = 41`), string interpolation (`"{a} + {b}"`), `print` with any value. |
-| **C-level performance** | Compiles to C99 and then to native code with `gcc -O2`; generics are monomorphised; structs are unboxed values; there is no GC, no VM, no reflection. |
-| **Lua-level lightweight** | The whole runtime is ~250 lines of C with libc as its only dependency. A hello-world binary is about 61 KB. |
-| **Haskell-style types** | Hindley–Milner inference, algebraic data types (`enum`), parametric polymorphism, pattern matching with exhaustiveness checking, `Option`/`Result`. |
-| **Assembly-level control** | Raw pointers, pointer arithmetic, casts, `extern` C ABI declarations, and inline `asm("...")` with operand substitution. |
-| **Host services** | `read_file`, `write_file`, `env`, `args`, `now_ms`, with `Result`/`Option` error handling. |
-| **Ergonomics** | `expr?`, `Option`/`Result` methods, capturing closures, `Box<T>`, `Rc<T>`, references in structs, getters returning `&self.field`, `&dyn Trait`, generic impls, multi-file imports, traits with bounds and defaults. |
+| **Rust** | Ownership, moves, borrow checking, RAII drops, an explicit `unsafe:` boundary. |
+| **Python** | Significant indentation, local type inference, string interpolation, readable collection syntax. |
+| **Haskell** | Hindley–Milner-style inference, algebraic data types (`enum`), exhaustive pattern matching, `Option`/`Result`. |
+| **C** | Compilation through C99 to native code, unboxed structs, a small libc-based runtime, `extern` C ABI declarations. |
+| **Lua** | A deliberately small runtime with no VM, no GC and very little ceremony for small programs. |
+| **Assembly** | Raw pointers, pointer arithmetic, casts and inline `asm("...")` under `unsafe:`. |
+
+Atrat has its own syntax, semantics and tradeoffs. Some ideas inspired by these
+languages are only partially implemented; the [honest boundaries](#honest-boundaries)
+below are part of the project, not fine print.
+
+Additional built-in conveniences include `read_file`, `write_file`, `env`,
+`args`, `now_ms`, `expr?`, `Option`/`Result` methods, capturing closures,
+`Box<T>`, `Rc<T>`, references in structs, `&dyn Trait`, generic impls and
+multi-file imports.
 
 This repository contains a working compiler, a borrow checker, a type checker, a
 C backend, a standard prelude, examples and an end-to-end test suite. It is an
