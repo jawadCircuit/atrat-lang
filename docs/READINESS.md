@@ -21,13 +21,30 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 81 end-to-end cases incl. negative tests; no fuzzing, no differential testing at scale. |
+| Test suite | **Moderate** | 91 end-to-end cases incl. 45 negative tests; mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Reference, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.1 added
+
+- Borrow checking now tracks references into `Box<T>` and `Rc<T>` payloads:
+  dropping or moving the box/Rc while such a reference is alive is rejected.
+- Assignment through `*box` respects live borrows and requires a mutable
+  binding; reads through `Box`/`Rc` respect mutable borrows.
+- Reference provenance lets a `&mut` use its own borrow without being blocked
+  by itself, while still rejecting other live borrows.
+- Stable diagnostic codes (`E0301`, `E0302`, ...) and Rust-style `error[E...]`
+  headers with source arrows and `help:` lines. See `docs/DIAGNOSTICS.md`.
+- Added `tests/fuzz_smoke.py`, `tests/validation_matrix.py` and
+  `tests/sanitizers.py`; CI now has ASan/UBSan, fuzz, optimization-level and
+  GCC/Clang matrix jobs.
+- Memory lifecycle tests for `Box`, `Rc`, early returns, nested scopes,
+  conditional branches, owned struct fields and trait objects.
+- 91/91 end-to-end tests, including 45 negative cases.
 
 ## What 0.8.0 added
 
@@ -123,7 +140,7 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | No visibility, namespacing, separate compilation or package boundaries. | 3–5 weeks |
-| C4 | No fuzzing / formal soundness evidence | The checker is hand-written; 81 tests cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No formal soundness evidence | The checker is hand-written; 91 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 
 ### High
@@ -146,7 +163,7 @@ remaining blockers are listed with severity and an honest estimate.
 - Closures cannot capture their environment yet.
 - No slices; `List<T>` is the only sequence.
 - No overflow-checked arithmetic mode (only wrapping + traps for div/shift).
-- No sanitizer integration (`-fsanitize=address` can be added manually).
+- ASan/UBSan support exists via `ATRAT_CFLAGS`, but is unavailable in the local MinGW toolchain; CI runs it on Linux.
 - No deterministic cross-platform behaviour for `char`/float formatting edge cases.
 - No benchmarks for real workloads (only micro-benchmarks).
 - `unsafe:` is a block, not an auditable function boundary.

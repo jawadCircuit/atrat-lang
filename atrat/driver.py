@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import tempfile
 
 from .check import BorrowError, TypeError_, check_program
 from .codegen import CodegenError, generate
-from .lexer import AtratError, tokenize
+from .lexer import AtratError, diagnostic_code, tokenize
 from .parser import Parser, parse
 from .runtime import RUNTIME
 from .version import __version__
@@ -134,14 +135,16 @@ def render_error(err: AtratError, src: str = "", filename: str = "") -> str:
         lines = src.splitlines()
         line_no = err.line
         text = lines[line_no - 1] if 1 <= line_no <= len(lines) else ""
-    out = [f"{filename}:{line_no}:{err.col}: {err.kind}: {err.msg}"]
+    code = diagnostic_code(err)
+    out = [f"error[{code}]: {err.kind}: {err.msg}",
+           f"  --> {filename}:{line_no}:{err.col}"]
     if text:
-        out.append("  |")
+        out.append("   |")
         out.append(f"{line_no:>3} | {text}")
         col = max(1, err.col)
-        out.append("  | " + " " * (col - 1) + "^")
+        out.append("   | " + " " * (col - 1) + "^")
     if getattr(err, "hint", ""):
-        out.append(f"  = hint: {err.hint}")
+        out.append(f"   = help: {err.hint}")
     return "\n".join(out)
 
 
@@ -166,6 +169,9 @@ def write_c(module, c_path: str) -> str:
 
 
 def find_cc() -> str:
+    configured = os.environ.get("ATRAT_CC")
+    if configured:
+        return configured
     for name in ("gcc", "clang", "cc"):
         found = shutil.which(name)
         if found:
@@ -175,7 +181,8 @@ def find_cc() -> str:
 
 def build_c(c_path: str, exe_path: str, opt_level: str):
     cc = find_cc()
-    cmd = [cc, "-std=gnu11", f"-O{opt_level}", "-fwrapv",
+    extra = shlex.split(os.environ.get("ATRAT_CFLAGS", ""))
+    cmd = [cc, "-std=gnu11", f"-O{opt_level}", "-fwrapv", *extra,
            "-o", exe_path, c_path, "-lm"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:

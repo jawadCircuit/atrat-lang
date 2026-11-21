@@ -2357,6 +2357,7 @@ class BVar:
     uninit: bool = False
     borrow_src: set | None = None
     borrow_mut: bool = False
+    ref_borrow: object = None
 
 
 @dataclass
@@ -2394,10 +2395,11 @@ class BorrowChecker:
         self.scopes.pop()
 
     def bind(self, name, ty, mutable, node, uninit=False,
-             borrow_src=None, borrow_mut=False):
+             borrow_src=None, borrow_mut=False, ref_borrow=None):
         self.scopes[-1][name] = BVar(name, ty, mutable, getattr(node, "line", 0),
                                      uninit=uninit, borrow_src=borrow_src,
-                                     borrow_mut=borrow_mut)
+                                     borrow_mut=borrow_mut,
+                                     ref_borrow=ref_borrow)
 
     def lookup(self, name):
         for sc in reversed(self.scopes):
@@ -2451,9 +2453,9 @@ class BorrowChecker:
     def active_on(self, name):
         return [b for b in self.borrows if name in b.roots]
 
-    def check_no_borrows(self, roots, node, action):
+    def check_no_borrows(self, roots, node, action, ignore=None):
         for root in roots:
-            act = self.active_on(root)
+            act = [b for b in self.active_on(root) if b is not ignore]
             if act:
                 b = act[0]
                 self.err(f"cannot {action} `{root}` while it is borrowed", node,
@@ -2466,7 +2468,7 @@ class BorrowChecker:
             return
         self.check_mut_borrow(roots, node)
 
-    def check_mut_borrow(self, roots, node):
+    def check_mut_borrow(self, roots, node, ignore=None):
         for root in roots:
             bv = self.lookup(root)
             if bv is None:
@@ -2481,7 +2483,7 @@ class BorrowChecker:
             elif not bv.mutable:
                 self.err(f"cannot mutably borrow `{root}` because it was declared with "
                          f"`let`", node, "declare it with `var` to allow mutation")
-            act = self.active_on(root)
+            act = [b for b in self.active_on(root) if b is not ignore]
             if act:
                 self.err(f"cannot borrow `{root}` as mutable while it is already "
                          f"borrowed", node, f"first borrow is on line {act[0].line}")
@@ -2491,8 +2493,10 @@ class BorrowChecker:
                                               if not b.temp]
 
     def add_borrow(self, roots, mut, node, temp=True):
-        self.borrows.append(Borrow(set(roots), mut, self.blocks[-1],
-                                   getattr(node, "line", 0), temp))
+        b = Borrow(set(roots), mut, self.blocks[-1],
+                   getattr(node, "line", 0), temp)
+        self.borrows.append(b)
+        return b
 
     def move_var(self, bv, node, root_name=None):
         if bv.uninit:
@@ -2523,6 +2527,16 @@ class BorrowChecker:
             self.use(e.index)
             return roots
         if isinstance(e, ast.Deref):
+            bt = self.m.u.resolve_deep(e.base.ty)
+            if isinstance(bt, TCon) and bt.name in ("Box", "Rc"):
+                # The owner of the pointee is the box/Rc binding itself.
+                return self.place_roots(e.base, node, read)
+            if isinstance(bt, TRef):
+                # A reference's pointee is tied to the reference's source.
+                roots, _mut = self.borrow_sources(e.base, _seen=None)
+                if roots:
+                    return roots
+                return self.place_roots(e.base, node, read)
             self.use(e.base, consume=False)
             return set()
         if isinstance(e, ast.Ref):
@@ -2539,12 +2553,23 @@ class BorrowChecker:
                     self.move_var(bv, node, root)
         return roots
 
-    def check_read_borrows(self, roots, node):
+    def check_read_borrows(self, roots, node, ignore=None):
         for root in roots:
             for b in self.active_on(root):
-                if b.mut:
+                if b.mut and b is not ignore:
                     self.err(f"cannot read `{root}` while it is mutably borrowed",
                              node, f"the mutable borrow starts on line {b.line}")
+
+    def ref_borrow_of(self, e):
+        """The borrow object that a reference expression itself carries."""
+        if isinstance(e, ast.Name):
+            bv = self.lookup(e.name)
+            return bv.ref_borrow if bv is not None else None
+        if isinstance(e, ast.Field):
+            return self.ref_borrow_of(e.base)
+        if isinstance(e, ast.Deref):
+            return self.ref_borrow_of(e.base)
+        return None
 
     # -- expressions ------------------------------------------------------
     def use(self, e, consume=True):
@@ -2592,7 +2617,8 @@ class BorrowChecker:
                         self.move_var(bv, e, root)
             return
         if isinstance(e, ast.Deref):
-            self.place_roots(e, e)
+            roots = self.place_roots(e, e)
+            self.check_read_borrows(roots, e, ignore=self.ref_borrow_of(e.base))
             base_t = self.m.u.resolve_deep(e.base.ty)
             if isinstance(base_t, TCon) and base_t.name in ("Box", "Rc"):
                 if consume and not self.m.is_copy(e.ty):
@@ -2609,10 +2635,11 @@ class BorrowChecker:
                     self.err("cannot take `&mut` through `Rc`", e,
                              "Rc provides shared access only")
             roots = self.place_roots(e.base, e)
+            ignore = self.ref_borrow_of(e.base)
             if e.mut:
-                self.check_mut_borrow(roots, e)
+                self.check_mut_borrow(roots, e, ignore=ignore)
             else:
-                self.check_read_borrows(roots, e)
+                self.check_read_borrows(roots, e, ignore=ignore)
                 for root in roots:
                     bv = self.lookup(root)
                     if bv is not None and bv.moved:
@@ -2672,7 +2699,9 @@ class BorrowChecker:
                         self.check_mut_borrow(roots, v)
                     else:
                         self.check_read_borrows(roots, v)
-                    self.add_borrow(roots, v.mut, e, temp=False)
+                    b = self.add_borrow(roots, v.mut, e, temp=False)
+                    if getattr(e, "ref_borrow", None) is None:
+                        e.ref_borrow = b
                 else:
                     self.use(v)
                     roots, mut = self.borrow_sources(v)
@@ -2716,7 +2745,7 @@ class BorrowChecker:
         mut = _has_mut_ref(self.m, rt)
         e.returned_src = set(roots)
         e.returned_mut = mut
-        self.add_borrow(set(roots), mut, e, temp=False)
+        e.returned_borrow = self.add_borrow(set(roots), mut, e, temp=False)
 
     def check_call(self, e):
         solved = getattr(e, "solved", None)
@@ -2887,6 +2916,13 @@ class BorrowChecker:
                 roots |= r
                 mut = mut or m
             return roots, mut
+        if isinstance(e, ast.Field):
+            # A field of a struct that carries references inherits the struct's
+            # source. This is conservative and keeps mutations through &mut
+            # fields tied to the original owner.
+            return self.borrow_sources(e.base, _seen)
+        if isinstance(e, ast.Index):
+            return self.borrow_sources(e.base, _seen)
         if isinstance(e, ast.Call):
             src = getattr(e, "returned_src", None)
             if src:
@@ -2902,25 +2938,30 @@ class BorrowChecker:
             return
         if isinstance(s, ast.Let):
             init = s.init
+            ref_borrow = None
             if init is not None:
                 if isinstance(init, ast.Ref):
                     roots = self.place_roots(init.base, s)
+                    ignore = self.ref_borrow_of(init.base)
                     if init.mut:
-                        self.check_mut_borrow(roots, s)
+                        self.check_mut_borrow(roots, s, ignore=ignore)
                     else:
-                        self.check_read_borrows(roots, s)
-                    self.add_borrow(roots, init.mut, s, temp=False)
+                        self.check_read_borrows(roots, s, ignore=ignore)
+                    ref_borrow = self.add_borrow(roots, init.mut, s, temp=False)
                 elif isinstance(init, ast.Cast) and isinstance(init.base, ast.Ref):
                     self.use(init)
+                    ref_borrow = getattr(init, "returned_borrow", None)
                 else:
                     self.use(init)
+                    ref_borrow = (getattr(init, "returned_borrow", None)
+                                  or getattr(init, "ref_borrow", None))
             src, smut = (None, False)
             if init is not None:
                 roots, mut = self.borrow_sources(init)
                 if roots:
                     src, smut = roots, mut
             self.bind(s.name, s.ty, s.mutable, s, uninit=(s.init is None),
-                      borrow_src=src, borrow_mut=smut)
+                      borrow_src=src, borrow_mut=smut, ref_borrow=ref_borrow)
 
         elif isinstance(s, ast.Assign):
             if _has_ref(self.m, getattr(s.target, "ty", None) or UNIT):
@@ -2956,7 +2997,12 @@ class BorrowChecker:
                     self.err("dereferencing a raw pointer requires an `unsafe:` block", s)
                 if isinstance(t, TRef) and not t.mut:
                     self.err("cannot assign through a shared reference", s)
-                self.use(s.target.base)
+                roots = self.place_roots(s.target, s)
+                if isinstance(t, TCon) and t.name == "Box":
+                    self.require_mutable_roots(roots, s, "assign through")
+                ignore = self.ref_borrow_of(s.target.base)
+                self.check_no_borrows(roots, s, "assign through", ignore=ignore)
+                self.use(s.target.base, consume=False)
                 self.use(s.value)
             elif isinstance(s.target, ast.Ref):
                 self.err("cannot assign to a reference expression", s)

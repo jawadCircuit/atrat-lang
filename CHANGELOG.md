@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.8.1 — borrow provenance, diagnostics and validation
+
+### Borrow checker
+
+- References into `Box<T>`/`Rc<T>` payloads now borrow the box/Rc binding;
+  dropping or moving it while the reference is alive is rejected.
+- Assignment through `*box` checks live borrows and requires a mutable binding.
+- Reads through `Box`/`Rc` respect live mutable borrows.
+- A `&mut` can use its own borrow without being blocked by itself, while other
+  live borrows still conflict.
+- Reference provenance is propagated through struct fields and `&mut` fields.
+- New negative tests for box/Rc owner drop/move, dereference assignment while
+  borrowed, field-reference mutation conflicts and all previous safety cases.
+
+### Diagnostics
+
+- Stable diagnostic categories and Rust-style headers:
+  `error[E0301]: borrow error: ...`, source arrow, caret, and `help:`.
+- Added `docs/DIAGNOSTICS.md` with the code table.
+- Tests assert codes for returned-view, move-while-borrowed, mutable/shared
+  conflict, bare-dyn and trait-conflict errors.
+
+### Validation
+
+- `tests/sanitizers.py` runs the suite under ASan/UBSan where supported.
+- `tests/fuzz_smoke.py` performs deterministic mutation fuzzing of the front end
+  and C emitter and rejects compiler tracebacks.
+- `tests/validation_matrix.py` compares generated behavior across `-O0/-O2/-O3`
+  and available GCC/Clang, plus an 80-instantiation generic program.
+- CI jobs added for sanitizers, fuzzing and the optimization/compiler matrix.
+- Memory lifecycle coverage: Box/Rc counts, early returns, nested scopes,
+  conditional branches, owned struct fields and trait-object destruction.
+- 91 end-to-end tests (45 run, 45 compile-fail, 1 multi-file).
+
 ## 0.8.0 — safety and trait-system hardening
 
 ### Safety fixes

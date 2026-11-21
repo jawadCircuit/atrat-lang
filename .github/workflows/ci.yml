@@ -40,3 +40,31 @@ jobs:
         run: python atrc run examples/demo.atr
       - name: Sanity-check generated C is warning-free
         run: python atrc emit-c examples/demo.atr -o demo.c && gcc -std=gnu11 -O2 -Wall -Wextra -fwrapv -c demo.c -o demo.o
+
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install C toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc
+      - name: Run tests under ASan/UBSan
+        run: python tests/sanitizers.py
+
+  fuzz-and-matrix:
+    name: Fuzz + optimisation matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install C toolchains
+        run: sudo apt-get update && sudo apt-get install -y gcc clang
+      - name: Mutation fuzz smoke test
+        run: python tests/fuzz_smoke.py
+      - name: Optimisation/compiler matrix
+        run: python tests/validation_matrix.py

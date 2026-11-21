@@ -1005,6 +1005,89 @@ fn main() -> i32:
         "nested" + chr(10) + "nested" + chr(10),
     ),
     (
+        "rc-clone-count",
+        """
+fn main() -> i32:
+    let r = rc(7)
+    let a = r.clone()
+    let b = r.clone()
+    print(r.strong_count())
+    drop(a)
+    print(r.strong_count())
+    drop(b)
+    print(r.strong_count())
+    return 0
+""",
+        "3" + chr(10) + "2" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "box-owns-rc",
+        """
+struct H:
+    r: Rc<i64>
+fn main() -> i32:
+    let r = rc(7)
+    let b = box(H { r: r.clone() })
+    print(r.strong_count())
+    drop(b)
+    print(r.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "cleanup-early-return",
+        """
+struct H:
+    r: Rc<i64>
+fn early(r: Rc<i64>) -> i32:
+    let h = H { r: r }
+    if true:
+        return 0
+    return 1
+fn main() -> i32:
+    let r = rc(7)
+    print(r.strong_count())
+    early(r.clone())
+    print(r.strong_count())
+    return 0
+""",
+        "1" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "cleanup-nested-scopes",
+        """
+struct H:
+    r: Rc<i64>
+fn main() -> i32:
+    let r = rc(7)
+    if true:
+        let h = H { r: r.clone() }
+        print(r.strong_count())
+    print(r.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "cleanup-conditional-branches",
+        """
+struct H:
+    r: Rc<i64>
+fn main() -> i32:
+    let r = rc(7)
+    if true:
+        let h = H { r: r.clone() }
+        print(r.strong_count())
+    else:
+        let h = H { r: r.clone() }
+        print(r.strong_count())
+    print(r.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "1" + chr(10),
+    ),
+    (
         "rc-drop-count",
         """
 struct H:
@@ -1330,7 +1413,7 @@ fn bad(x: &i64) -> View:
 fn main() -> i32:
     return 0
 """,
-        "borrow error",
+        "error[E0301]",
         "returned borrow must be derived from",
     ),
     (
@@ -1418,6 +1501,96 @@ fn main() -> i32:
         "use of moved value",
     ),
     (
+        "field-ref-conflict",
+        """
+struct S:
+    x: i64
+struct H:
+    v: &mut S
+struct View:
+    r: &i64
+struct P:
+    s: S
+    t: String
+impl P:
+    fn view(&self) -> View:
+        return View { r: &self.s.x }
+fn main() -> i32:
+    var p = P { s: S { x: 1 }, t: "p" }
+    let h = H { v: &mut p.s }
+    let w = p.view()
+    *h.v = S { x: 2 }
+    print(*w.r)
+    return 0
+""",
+        "error[E0302]",
+        "cannot assign through `p` while it is borrowed",
+    ),
+    (
+        "box-ref-owner-drop",
+        """
+struct P:
+    x: i64
+    s: String
+fn main() -> i32:
+    let b = box(P { x: 1, s: "p" })
+    let r = &(*b).x
+    drop(b)
+    print(*r)
+    return 0
+""",
+        "error[E0302]",
+        "cannot move `b` while it is borrowed",
+    ),
+    (
+        "box-ref-owner-move",
+        """
+struct P:
+    x: i64
+    s: String
+fn main() -> i32:
+    let b = box(P { x: 1, s: "p" })
+    let r = &(*b).x
+    let c = b
+    print(*r)
+    return 0
+""",
+        "borrow error",
+        "cannot move `b` while it is borrowed",
+    ),
+    (
+        "rc-ref-owner-drop",
+        """
+struct P:
+    x: i64
+    s: String
+fn main() -> i32:
+    let b = rc(P { x: 1, s: "p" })
+    let r = &(*b).x
+    drop(b)
+    print(*r)
+    return 0
+""",
+        "borrow error",
+        "cannot move `b` while it is borrowed",
+    ),
+    (
+        "box-deref-assign-borrowed",
+        """
+struct P:
+    x: i64
+    s: String
+fn main() -> i32:
+    var b = box(P { x: 1, s: "p" })
+    let r = &(*b).x
+    *b = P { x: 2, s: "q" }
+    print(*r)
+    return 0
+""",
+        "borrow error",
+        "cannot assign through `b` while it is borrowed",
+    ),
+    (
         "view-multiple-sources",
         """
 struct View:
@@ -1499,7 +1672,7 @@ fn main() -> i32:
     print(*b)
     return 0
 """,
-        "borrow error",
+        "error[E0304]",
         "cannot read `p` while it is mutably borrowed",
     ),
     (
@@ -1635,7 +1808,7 @@ impl Show for P:
 fn main() -> i32:
     return 0
 """,
-        "type error",
+        "error[E0401]",
         "already implements",
     ),
     (
@@ -1648,7 +1821,7 @@ struct Bad:
 fn main() -> i32:
     return 0
 """,
-        "type error",
+        "error[E0308]",
         "stores a trait object by value",
     ),
     (

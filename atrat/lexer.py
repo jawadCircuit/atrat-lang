@@ -20,6 +20,50 @@ class LexError(AtratError):
     kind = "lex error"
 
 
+def diagnostic_code(err) -> str:
+    """Stable-ish diagnostic codes for the main error classes."""
+    kind = getattr(err, "kind", "error")
+    msg = getattr(err, "msg", str(err)).lower()
+    if kind == "lex error":
+        return "E0001"
+    if kind == "parse error":
+        return "E0002"
+    if "returned borrow" in msg or "reference parameter" in msg             or "returns a borrow" in msg or "returned nested reference" in msg:
+        return "E0301"
+    if "cannot move" in msg and "borrow" in msg:
+        return "E0302"
+    if "while it is borrowed" in msg and ("assign" in msg or "move" in msg):
+        return "E0302"
+    if "use of moved value" in msg or "moved before it is initialized" in msg:
+        return "E0303"
+    if "mutably borrowed" in msg or "as mutable while it is already" in msg             or "mutably borrow" in msg or "mutable borrow" in msg:
+        return "E0304"
+    if "immutable binding" in msg:
+        return "E0305"
+    if "before it is initialized" in msg:
+        return "E0306"
+    if "temporary" in msg and "borrow" in msg:
+        return "E0307"
+    if "stores a reference" in msg or "stores a trait object" in msg             or "reference yet" in msg:
+        return "E0308"
+    if "cannot capture" in msg or "nested capturing" in msg:
+        return "E0310"
+    if ("implement trait" in msg or "already implements" in msg
+            or "defined twice" in msg or "ambiguous method" in msg
+            or "missing trait method" in msg or "cyclic supertrait" in msg
+            or "cannot extend itself" in msg):
+        return "E0401"
+    if "not exhaustive" in msg:
+        return "E0203"
+    if "unknown variable" in msg or "unknown field" in msg             or "unknown type" in msg or "unknown trait" in msg             or "unknown module" in msg or "unknown supertrait" in msg:
+        return "E0202"
+    if kind == "borrow error":
+        return "E0300"
+    if kind == "type error":
+        return "E0201"
+    return "E0000"
+
+
 @dataclass
 class Token:
     kind: str
