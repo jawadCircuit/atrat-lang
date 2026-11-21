@@ -123,9 +123,11 @@ print((*b).len())
 drop(b)
 ```
 
-`Box<T>` is moved, not copied. Dereferencing a `Box` for a non-`Copy` value
-cannot move the payload out; borrow it or consume the box. A `Box<dyn Trait>`
-is the owned trait-object form.
+`Box<T>` is moved, not copied. Field and method access auto-dereferences, so
+`boxed_string.len()` and `boxed_point.get()` mean `(*boxed_string).len()` and
+`(*boxed_point).get()`. Dereferencing a `Box` for a non-`Copy` value cannot move
+the payload out; borrow it, clone the payload, or consume the box explicitly.
+A `Box<dyn Trait>` is the owned trait-object form.
 
 ## `Rc<T>`
 

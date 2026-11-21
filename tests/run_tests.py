@@ -1035,6 +1035,11 @@ fn main() -> i32:
         '2\n2\n1\n1\n10\n3\n2\n1\n2\n1\ndone\n',
     ),
     (
+        'box-method-autoderef',
+        'struct P:\n    n: i64\n    name: String\n\nimpl P:\n    fn get(&self) -> i64:\n        return self.n\n    fn bump(&mut self) -> i64:\n        self.n += 1\n        return self.n\n    fn name_of(&self) -> String:\n        return self.name.clone()\n\nfn main() -> i32:\n    var b: Box<P> = box(P { n: 7, name: "boxed".clone() })\n    print(b.get())\n    print(b.bump())\n    print(b.get())\n    print(b.name_of())\n    print(b.name)\n    print(b.name.len())\n\n    var l: Box<List<i64>> = box([1, 2])\n    print(l.len())\n    l.push(3)\n    print(l.pop().unwrap())\n\n    let s: Box<String> = box("hi".clone())\n    print(s.len())\n    print(s.clone())\n    return 0\n',
+        '7\n8\n8\nboxed\nboxed\n5\n2\n3\n2\nhi\n',
+    ),
+    (
         "enum-method-payload-drop",
         """
 fn main() -> i32:
@@ -1166,6 +1171,12 @@ FAIL_CASES = [
         'struct P:\n    s: String\n\nfn main() -> i32:\n    let p: P\n    drop(p)\n    return 0\n',
         "borrow error",
         "before it is initialized",
+    ),
+    (
+        "box-unwrap-noncopy",
+        'fn main() -> i32:\n    let b: Box<Option<String>> = box(Some("x".clone()))\n    print(b.unwrap())\n    return 0\n',
+        "borrow error",
+        "cannot move a non-Copy value out of a Box",
     ),
     (
         "use-after-move",

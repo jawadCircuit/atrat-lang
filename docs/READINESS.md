@@ -21,7 +21,7 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection; flat namespace, no visibility, no package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 103 cases incl. 47 compile-fail and 3 panic-path tests; 500-case mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 105 cases incl. 48 compile-fail and 3 panic-path tests; 500-case mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
@@ -29,11 +29,18 @@ remaining blockers are listed with severity and an honest estimate.
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
 
+## What 0.8.5 added
+
+- `Box<T>` method calls auto-dereference (`boxed_string.len()`,
+  `boxed_point.get()`, `boxed_list.push(x)`).
+- Moving a non-`Copy` payload out through a `Box` method remains rejected.
+- 105/105 tests.
+
 ## What 0.8.4 added
 
 - Fixed the sanitizer CI harness after it gained lifecycle examples: the
   `atrc` path constant was missing. No compiler behaviour changed.
-- 103/103 tests still pass.
+- 103/103 tests still passed at that release.
 
 ## What 0.8.3 added
 
@@ -55,7 +62,7 @@ remaining blockers are listed with severity and an honest estimate.
 - Added `docs/STDLIB.md`, `docs/REGRESSIONS.md` and `examples/lifecycle.atr`.
 - Increased mutation fuzz smoke to 500 generated cases (1,000 check/emission
   invocations) and added lifecycle scenarios to the sanitizer and matrix jobs.
-- 103/103 end-to-end tests.
+- 103/103 end-to-end tests at that release.
 
 ## What 0.8.2 added
 
@@ -178,7 +185,7 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | No visibility, namespacing, separate compilation or package boundaries. | 3–5 weeks |
-| C4 | No formal soundness evidence | The checker is hand-written; 103 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No formal soundness evidence | The checker is hand-written; 105 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 | C6 | Panic does not unwind | Panics abort `main`; locals are not dropped during a panic. Resource cleanup that must happen on failure needs an explicit design. | 2–4 weeks for a scoped unwinding model, more for full safety |
 
@@ -252,7 +259,7 @@ At part-time effort (roughly 10–15 hours/week), multiply the calendar ranges b
 The largest uncertainty is not the parser or code generator. It is the work that
 turns a compiler into a platform: lifetime/escape semantics, a real standard
 library, module/package boundaries, panic cleanup, tooling, security response,
-and enough external use to find the bugs the current 103 tests cannot.
+and enough external use to find the bugs the current 105 tests cannot.
 
 ## Recommended path
 

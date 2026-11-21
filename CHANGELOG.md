@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.5 — Box method auto-deref
+
+- Method calls on `Box<T>` now auto-dereference: `boxed_string.len()`,
+  `boxed_point.get()`, `boxed_list.push(x)` and reference-receiver methods work
+  like they do through field access.
+- A method call that would move a non-`Copy` payload out of a `Box` is rejected
+  with `E0300`; borrow/clone the payload or consume the box explicitly.
+- Added positive and negative tests for `Box<String>`, `Box<List<T>>`,
+  `Box<Struct>` and `Box<Option<String>>`.
+- 105/105 tests pass.
+- Added `docs/ECOSYSTEM.md`: a deliberately deferred package-manager and
+  library-ecosystem plan. No package-manager code is included.
+
 ## 0.8.4 — sanitizer harness fix
 
 - Fix `tests/sanitizers.py`, which referenced the `atrc` path without defining
@@ -29,7 +42,7 @@
   **not** run on panic; this is documented as a known limitation.
 - Mutation fuzz smoke now runs 500 generated cases; sanitizer and optimisation
   matrix jobs include lifecycle examples.
-- 103/103 end-to-end tests pass.
+- 105/105 end-to-end tests pass.
 
 ## 0.8.2 — enum payload cleanup
 

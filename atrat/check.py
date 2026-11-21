@@ -1705,6 +1705,20 @@ class FnChecker:
                 t = boxed_inner
             inner = boxed_inner
 
+        # Field access already auto-dereferences Box/Rc. Method calls should be
+        # just as usable: `boxed_string.len()` means `(*boxed_string).len()`.
+        # A consuming method is rejected later by consume_place, so this only
+        # changes the receiver path, not ownership rules.
+        if isinstance(inner, TCon) and inner.name == "Box":
+            elem = self.u.resolve_deep(inner.args[0])
+            e.callee.base = ast.Deref(
+                base=e.callee.base,
+                line=getattr(e.callee, "line", 0),
+                col=getattr(e.callee, "col", 0),
+                ty=elem,
+            )
+            return self.infer_method_call(e, elem)
+
         if isinstance(inner, TCon) and inner.name == "dyn":
             tri = self.m.traits.get(inner.args[0].name)
             if tri is None:
@@ -2555,6 +2569,12 @@ class BorrowChecker:
         return set()
 
     def consume_place(self, e, node):
+        if isinstance(e, ast.Deref):
+            bt = self.m.u.resolve_deep(e.base.ty)
+            if isinstance(bt, TCon) and bt.name in ("Box", "Rc")                     and not self.m.is_copy(e.ty):
+                self.err(f"cannot move a non-Copy value out of a {bt.name}", e,
+                         "borrow it, clone the payload, or consume the "
+                         f"{bt.name} explicitly")
         roots = self.place_roots(e, node)
         if not self.m.is_copy(e.ty):
             for root in roots:
