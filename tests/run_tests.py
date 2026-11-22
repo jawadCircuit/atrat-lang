@@ -2072,16 +2072,20 @@ MULTI_CASES = [
         "modules",
         {
             "sub/math.atr": """
-fn add(a: i64, b: i64) -> i64:
+pub fn add(a: i64, b: i64) -> i64:
     return a + b
 """,
             "util.atr": """
 import "sub/math"
 
-fn greet(name: str) -> String:
+pub struct Pair:
+    a: i64
+    b: i64
+
+pub fn greet(name: str) -> String:
     return "hello, {name}"
 
-fn answer() -> i64:
+pub fn answer() -> i64:
     return add(40, 2)
 """,
             "main.atr": """
@@ -2090,11 +2094,78 @@ import "util"
 fn main() -> i32:
     print(greet("atrat"))
     print(answer())
+    let p = Pair { a: 20, b: 22 }
+    print(p.a + p.b)
     return 0
 """,
         },
         "main.atr",
-        "hello, atrat\n42\n",
+        "hello, atrat\n42\n42\n",
+    ),
+]
+
+MULTI_FAIL_CASES = [
+    (
+        "private-function",
+        {
+            "helper.atr": """
+fn hidden() -> i64:
+    return 9
+""",
+            "main.atr": """
+import "helper"
+
+fn main() -> i32:
+    print(hidden())
+    return 0
+""",
+        },
+        "main.atr",
+        "type error",
+        "private to module 'helper.atr'",
+    ),
+    (
+        "private-struct",
+        {
+            "shapes.atr": """
+struct Point:
+    x: i64
+""",
+            "main.atr": """
+import "shapes"
+
+fn main() -> i32:
+    let p = Point { x: 1 }
+    print(p.x)
+    return 0
+""",
+        },
+        "main.atr",
+        "type error",
+        "private to module 'shapes.atr'",
+    ),
+    (
+        "exposed-private-type",
+        {
+            "secret.atr": """
+struct Hidden:
+    x: i64
+
+pub fn hidden() -> Hidden:
+    return Hidden { x: 1 }
+""",
+            "main.atr": """
+import "secret"
+
+fn main() -> i32:
+    let h = hidden()
+    print(h.x)
+    return 0
+""",
+        },
+        "main.atr",
+        "type error",
+        "exposes private type 'Hidden'",
     ),
 ]
 
@@ -2153,6 +2224,28 @@ def main() -> int:
             failed += 1
         else:
             print(f"ok   {name}")
+
+    for name, files, main_file, kind, needle in MULTI_FAIL_CASES:
+        total += 1
+        d = os.path.join(tmp, name)
+        os.makedirs(d, exist_ok=True)
+        for rel, src in files.items():
+            p = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(src)
+        proc = run([sys.executable, ATRC, "check",
+                    os.path.join(d, main_file)])
+        combined = proc.stdout + proc.stderr
+        if proc.returncode == 0:
+            print(f"FAIL {name}: expected visibility rejection, but it type-checked")
+            failed += 1
+        elif kind not in combined or needle not in combined:
+            print(f"FAIL {name}: wrong visibility diagnostic")
+            print(combined)
+            failed += 1
+        else:
+            print(f"ok   {name} (private rejected)")
 
     for name, src, kind, needle in FAIL_CASES:
         total += 1

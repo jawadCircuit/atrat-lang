@@ -90,7 +90,14 @@ extern fn getpid() -> i32
   `repr(C)`-style.
 - `import "path"` (or `import a.b`) loads another file relative to the current
   file. Modules share one flat namespace; duplicate imports are deduplicated and
-  cycles are rejected. `pub` is accepted but visibility is not enforced yet.
+  cycles are rejected.
+- `pub` is enforced across files. A non-`pub` function, struct, enum, trait or
+  impl method is private to its file. A public declaration cannot expose a
+  private type or trait through its signature, fields or variants. Struct fields
+  inherit their struct's visibility; there is no per-field `pub` yet.
+- There is no module namespacing or separate compilation: two public
+  declarations with the same name still collide, and every build recompiles the
+  merged translation unit.
 - Traits declare method signatures; `impl Trait for Type:` provides them.
   Dispatch is static, and generic functions can require bounds (see below).
 

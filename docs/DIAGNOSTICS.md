@@ -32,6 +32,7 @@ error[E0301]: borrow error: returned borrow must be derived from `x`
 | `E0308` | Reference/trait object stored where its lifetime is unsupported |
 | `E0310` | Unsupported closure capture |
 | `E0401` | Trait implementation/method conflict or missing requirement |
+| `E0402` | Cross-file access to a private declaration or type |
 
 Codes identify a category, not a guarantee that the wording will never improve.
 The human-readable message, `help:` line and optional `note:` lines are part of

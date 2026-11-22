@@ -831,4 +831,6 @@ def _ends_with_block(e) -> bool:
 
 def parse(src: str, filename: str = "<input>") -> ast.Program:
     toks = tokenize(src, filename)
-    return Parser(toks, filename, src).parse_program()
+    prog = Parser(toks, filename, src).parse_program()
+    ast.stamp_sources(prog, filename)
+    return prog

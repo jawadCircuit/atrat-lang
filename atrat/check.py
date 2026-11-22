@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import copy
+import os
 
 from . import ast
 from .typesys import (
@@ -37,6 +38,8 @@ class StructInfo:
     fields: list            # list[(str, Type)]
     decl: ast.StructDecl
     repr_c: bool = False
+    source: str = ""
+    public: bool = False
 
 
 @dataclass
@@ -45,6 +48,8 @@ class EnumInfo:
     generics: list
     variants: list          # list[(str, list[Type])]
     decl: ast.EnumDecl
+    source: str = ""
+    public: bool = False
 
 
 @dataclass
@@ -63,6 +68,8 @@ class TraitInfo:
     methods: dict           # method name -> ast.FnDecl signature
     supertraits: list = field(default_factory=list)
     impls: dict = field(default_factory=dict)   # type name -> {method: FnInfo}
+    source: str = ""
+    public: bool = False
 
 
 @dataclass
@@ -79,6 +86,8 @@ class FnInfo:
     owner: str | None = None
     borrow_param: str | None = None
     borrow_mut: bool = False
+    source: str = ""
+    public: bool = False
 
 
 @dataclass
@@ -102,6 +111,26 @@ class Module:
         self.variants: dict[str, list[VariantRef]] = {}
         self.program: ast.Program | None = None
         self.warnings: list[str] = []
+
+    def require_visible(self, info, node, name: str | None = None):
+        """Reject a cross-file use of a declaration that is not `pub`.
+
+        Single-file compiles and the prelude have no cross-module boundary.
+        This is visibility only; there is no module namespace or separate
+        compilation yet.
+        """
+        source = getattr(node, "source", "")
+        target = getattr(info, "source", "")
+        if not source or not target or source == target or target == "<prelude>":
+            return
+        if getattr(info, "public", False):
+            return
+        label = name or getattr(info, "name", "declaration")
+        module = os.path.basename(target)
+        raise TypeError_(
+            f"'{label}' is private to module '{module}'",
+            getattr(node, "line", 0), getattr(node, "col", 0),
+            f"mark '{label}' as `pub` in {module} to use it from another file")
 
     # -- type helpers -----------------------------------------------------
     def is_copy(self, t, _seen=None) -> bool:
@@ -203,6 +232,7 @@ def collect(prog: ast.Program) -> Module:
             if node.trait not in m.traits:
                 raise TypeError_(f"unknown trait '{node.trait}' in dyn type",
                                  node.line, node.col)
+            m.require_visible(m.traits[node.trait], node, node.trait)
             return TCon("dyn", [TCon(node.trait)])
         if isinstance(node, ast.TyName):
             name = TYPE_ALIASES.get(node.name, node.name)
@@ -223,6 +253,7 @@ def collect(prog: ast.Program) -> Module:
                 return TCon(name, [ty(node.args[0], generics, ctx)])
             if name in m.structs:
                 info = m.structs[name]
+                m.require_visible(info, node, name)
                 if len(node.args) != len(info.generics):
                     raise TypeError_(
                         f"type '{name}' expects {len(info.generics)} argument(s), got {len(node.args)}",
@@ -230,6 +261,7 @@ def collect(prog: ast.Program) -> Module:
                 return TCon(name, [ty(a, generics, ctx) for a in node.args])
             if name in m.enums:
                 info = m.enums[name]
+                m.require_visible(info, node, name)
                 if len(node.args) != len(info.generics):
                     raise TypeError_(
                         f"type '{name}' expects {len(info.generics)} argument(s), got {len(node.args)}",
@@ -254,16 +286,25 @@ def collect(prog: ast.Program) -> Module:
         if isinstance(d, ast.StructDecl):
             if d.name in m.structs or d.name in m.enums:
                 raise TypeError_(f"type '{d.name}' is defined twice", d.line, d.col)
-            m.structs[d.name] = StructInfo(d.name, list(d.generics), [], d, d.repr_c)
+            m.structs[d.name] = StructInfo(
+                d.name, list(d.generics), [], d, d.repr_c,
+                source=getattr(d, "source", ""),
+                public=getattr(d, "is_public", False))
         elif isinstance(d, ast.EnumDecl):
             if d.name in m.structs or d.name in m.enums:
                 raise TypeError_(f"type '{d.name}' is defined twice", d.line, d.col)
-            m.enums[d.name] = EnumInfo(d.name, list(d.generics), [], d)
+            m.enums[d.name] = EnumInfo(
+                d.name, list(d.generics), [], d,
+                source=getattr(d, "source", ""),
+                public=getattr(d, "is_public", False))
         elif isinstance(d, ast.TraitDecl):
             if d.name in m.traits:
                 raise TypeError_(f"trait '{d.name}' is defined twice", d.line, d.col)
-            m.traits[d.name] = TraitInfo(d.name, list(d.generics), {},
-                                         list(getattr(d, "supertraits", [])))
+            m.traits[d.name] = TraitInfo(
+                d.name, list(d.generics), {},
+                list(getattr(d, "supertraits", [])),
+                source=getattr(d, "source", ""),
+                public=getattr(d, "is_public", False))
 
     # Pass 2: fields, variants.
     for d in prog.decls:
@@ -312,6 +353,7 @@ def collect(prog: ast.Program) -> Module:
                 if parent == d.name:
                     raise TypeError_(f"trait '{d.name}' cannot extend itself",
                                      d.line, d.col)
+                m.require_visible(m.traits[parent], d, parent)
 
     trait_lines = {d.name: (d.line, d.col) for d in prog.decls
                    if isinstance(d, ast.TraitDecl)}
@@ -358,7 +400,9 @@ def collect(prog: ast.Program) -> Module:
                     decl=fn, name=fn.name, generics=list(fn.generics),
                     generic_vars=gvars, params=params, ret=ret,
                     scheme=Scheme(scheme_vars, TFn(params, ret)),
-                    is_method=True, self_mode=fn.params[0].mode, owner=None)
+                    is_method=True, self_mode=fn.params[0].mode, owner=None,
+                    source=getattr(d, "source", ""),
+                    public=getattr(d, "is_public", False))
 
     # Pass 3: functions.
     for d in prog.decls:
@@ -387,6 +431,7 @@ def collect(prog: ast.Program) -> Module:
                 trait = m.traits.get(d.trait_name)
                 if trait is None:
                     raise TypeError_(f"unknown trait '{d.trait_name}'", d.line, d.col)
+                m.require_visible(trait, d, d.trait_name)
                 if owner in trait.impls:
                     raise TypeError_(f"'{owner}' already implements '{trait.name}'",
                                      d.line, d.col)
@@ -479,6 +524,94 @@ def collect(prog: ast.Program) -> Module:
                             line, col,
                             f"declare '{mname}' in '{name}' to disambiguate")
                     seen[mname] = owner
+    # A public declaration may not expose a private type through its
+    # signature or fields. This is the same rule that makes `pub` meaningful:
+    # callers can use the public surface without naming hidden implementation
+    # types.
+    def named_types(t, out):
+        t = m.u.resolve_deep(t)
+        if isinstance(t, TCon):
+            if t.name == "dyn" and t.args:
+                inner = m.u.resolve_deep(t.args[0])
+                if isinstance(inner, TCon):
+                    out.append(inner.name)
+                return
+            out.append(t.name)
+            for a in t.args:
+                named_types(a, out)
+        elif isinstance(t, (TRef, TPtr)):
+            named_types(t.inner, out)
+        elif isinstance(t, TFn):
+            for p in t.params:
+                named_types(p, out)
+            named_types(t.ret, out)
+
+    checked = set()
+
+    def check_names(owner_name, info, types):
+        if not getattr(info, "public", False):
+            return
+        source = getattr(info, "source", "")
+        if not source or source == "<input>":
+            return
+        names = []
+        for t in types:
+            named_types(t, names)
+        for name in names:
+            target = m.structs.get(name) or m.enums.get(name) or m.traits.get(name)
+            if target is None:
+                continue
+            if getattr(target, "source", "") == "<prelude>":
+                continue
+            if getattr(target, "public", False):
+                continue
+            key = (id(info), name)
+            if key in checked:
+                continue
+            checked.add(key)
+            raise TypeError_(
+                f"public {owner_name} exposes private type '{name}'",
+                getattr(info.decl, "line", 0),
+                getattr(info.decl, "col", 0),
+                f"declare type '{name}' as `pub` or remove it from the public interface")
+
+    def check_bound_names(owner_name, info):
+        if not getattr(info, "public", False):
+            return
+        source = getattr(info, "source", "")
+        if not source or source == "<input>":
+            return
+        for g, bounds in getattr(getattr(info, "decl", None), "bounds", {}).items():
+            for name in bounds:
+                target = m.traits.get(name)
+                if target is None or getattr(target, "source", "") == "<prelude>":
+                    continue
+                if getattr(target, "public", False):
+                    continue
+                raise TypeError_(
+                    f"public {owner_name} exposes private trait '{name}'",
+                    getattr(info.decl, "line", 0),
+                    getattr(info.decl, "col", 0),
+                    f"declare trait '{name}' as `pub` or remove it from the public interface")
+
+    for info in list(m.fns.values()) + list(m.methods.values()):
+        check_names(f"function '{info.name}'", info, list(info.params) + [info.ret])
+        check_bound_names(f"function '{info.name}'", info)
+    for tri in m.traits.values():
+        for sig in tri.methods.values():
+            check_names(f"trait method '{tri.name}.{sig.name}'", sig,
+                        list(sig.params) + [sig.ret])
+    for sinfo in m.structs.values():
+        if not sinfo.public or sinfo.source == "<input>":
+            continue
+        for fname, fty in sinfo.fields:
+            check_names(f"field '{sinfo.name}.{fname}'", sinfo, [fty])
+    for einfo in m.enums.values():
+        if not einfo.public or einfo.source == "<input>":
+            continue
+        for vname, vtys in einfo.variants:
+            check_names(f"variant '{einfo.name}.{vname}'", einfo, vtys)
+
     return m
 
 
@@ -589,6 +722,7 @@ def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
             if trait not in m.traits:
                 raise TypeError_(f"unknown trait '{trait}' in bound for '{g}'",
                                  d.line, d.col)
+            m.require_visible(m.traits[trait], d, trait)
     impl_generics = list(impl_generics or [])
     if len(set(impl_generics) & set(d.generics)):
         raise TypeError_("impl and method type parameters must have different names",
@@ -638,11 +772,20 @@ def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
         borrow_param = ref_params[0][0]
         borrow_mut = _has_mut_ref(m, ret)
     scheme_vars = [v.id for v in gvars.values()]
-    return FnInfo(decl=d, name=d.name, generics=impl_generics + list(d.generics),
+    info = FnInfo(decl=d, name=d.name, generics=impl_generics + list(d.generics),
                   generic_vars=gvars, params=params, ret=ret,
                   scheme=Scheme(scheme_vars, TFn(params, ret)),
                   is_method=owner is not None, self_mode=self_mode, owner=owner,
-                  borrow_param=borrow_param, borrow_mut=borrow_mut)
+                  borrow_param=borrow_param, borrow_mut=borrow_mut,
+                  source=getattr(d, "source", ""),
+                  public=getattr(d, "is_public", False))
+    # Impl methods inherit the visibility of the type they are defined on;
+    # method-level `pub` is not part of the surface syntax yet.
+    if owner is not None:
+        oi = m.structs.get(owner) or m.enums.get(owner)
+        if oi is not None and oi.public:
+            info.public = True
+    return info
 
 
 # --------------------------------------------------------------------------
@@ -658,6 +801,9 @@ class FnChecker:
         self.unsafe = 0
         self.lambda_base = None
         self.lambda_captures: list[set] = []
+
+    def require_visible(self, info, node, name=None):
+        self.m.require_visible(info, node, name)
 
     # -- helpers ----------------------------------------------------------
     def err(self, msg, node, hint=""):
@@ -1217,6 +1363,7 @@ class FnChecker:
             if isinstance(e.base, ast.Name) and e.base.name not in self.scopes[-1] \
                     and self.lookup(e.base.name) is None and e.base.name in self.m.enums:
                 enum = self.m.enums[e.base.name]
+                self.require_visible(enum, e, enum.name)
                 ref = self.m.variant_ref(enum.name, e.field)
                 if ref is None:
                     self.err(f"enum '{enum.name}' has no variant '{e.field}'", e)
@@ -1381,12 +1528,14 @@ class FnChecker:
         ref = self.m.find_unqualified_variant(e.name)
         if ref is not None:
             enum = self.m.enums[ref.enum]
+            self.require_visible(enum, e, enum.name)
             _, tys = enum.variants[ref.index]
             if tys:
                 self.err(f"variant '{ref.enum}.{e.name}' needs {len(tys)} argument(s)", e)
             return TCon(ref.enum, [self.fresh(hint=g) for g in enum.generics])
         if e.name in self.m.fns:
             info = self.m.fns[e.name]
+            self.require_visible(info, e, e.name)
             if info.generics:
                 self.err(f"generic function '{e.name}' needs a monomorphic context "
                          f"to be used as a value", e)
@@ -1405,6 +1554,7 @@ class FnChecker:
         info = self.m.structs.get(e.name)
         if info is None:
             self.err(f"unknown struct '{e.name}'", e)
+        self.require_visible(info, e, e.name)
         args = [self.fresh(hint=g) for g in info.generics]
         t = TCon(e.name, args)
         mp = dict(zip(info.generics, args))
@@ -1504,6 +1654,7 @@ class FnChecker:
             # Enum variant constructor: Shape.Circle(...)
             if isinstance(base, ast.Name) and self.lookup(base.name) is None \
                     and base.name in self.m.enums:
+                self.require_visible(self.m.enums[base.name], e, base.name)
                 ref = self.m.variant_ref(base.name, callee.field)
                 if ref is None:
                     self.err(f"enum '{base.name}' has no variant '{callee.field}'", e)
@@ -1527,6 +1678,7 @@ class FnChecker:
                 return self.infer_builtin(e, name)
             if name in self.m.fns:
                 info = self.m.fns[name]
+                self.require_visible(info, e, name)
                 inst, mapping = self.u.instantiate(info.scheme)
                 params = inst.params
                 if len(params) != len(e.args):
@@ -1544,6 +1696,7 @@ class FnChecker:
             ref = self.m.find_unqualified_variant(name)
             if ref is not None:
                 enum = self.m.enums[ref.enum]
+                self.require_visible(enum, e, enum.name)
                 _, payload = enum.variants[ref.index]
                 if len(payload) != len(e.args):
                     self.err(f"variant '{ref.enum}.{name}' takes {len(payload)} "
@@ -2237,6 +2390,7 @@ def type_from_ast_checked(m: Module, node, generic_vars, err, ctx):
         if isinstance(n, ast.TyDyn):
             if n.trait not in m.traits:
                 err(f"unknown trait '{n.trait}' in dyn type", n)
+            m.require_visible(m.traits[n.trait], n, n.trait)
             return TCon("dyn", [TCon(n.trait)])
         if isinstance(n, ast.TyName):
             name = TYPE_ALIASES.get(n.name, n.name)
@@ -2250,9 +2404,11 @@ def type_from_ast_checked(m: Module, node, generic_vars, err, ctx):
                 return TCon(name, [go(n.args[0])])
             if name in m.structs:
                 info = m.structs[name]
+                m.require_visible(info, n, name)
                 return TCon(name, [go(a) for a in n.args])
             if name in m.enums:
                 info = m.enums[name]
+                m.require_visible(info, n, name)
                 return TCon(name, [go(a) for a in n.args])
             err(f"unknown type '{name}'", n)
         if isinstance(n, ast.TyRef):

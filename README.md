@@ -92,10 +92,10 @@ point, and the generated C is available with `atrc emit-c`.
 | Recursive types, generics, traits, supertraits, `dyn` and `Box<dyn>` | **Working** for the documented subset |
 | Panic semantics | **Cleanup, not unwinding**: live owners are destroyed, then exit 101; no catch/recover |
 | Standard library | **Minimal** |
-| Modules / packaging / tooling | **Early** |
+| Modules / packaging / tooling | **Partial**: cross-file `pub` visibility enforced; no namespacing or separate compilation |
 | Production readiness | **No** |
 
-There are **116 end-to-end tests** covering successful programs, exact stdout,
+There are **119 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -167,8 +167,11 @@ production compiler**. The important current gaps:
   conservative and block-scoped: views cannot be rebound, stored beyond the
   block, or captured in ways that outlive their source. There are no explicit
   lifetime annotations yet.
-- Modules are a flat namespace: `import` merges declarations, `pub` is parsed
-  but visibility is not enforced, and there is no separate compilation.
+- Modules are still a flat namespace: `import` merges declarations and `pub`
+  is now enforced across files. A non-`pub` function/type cannot be used from
+  another file, and a public declaration cannot expose a private type or trait.
+  There is no module namespacing, per-field `pub`, separate compilation or
+  package boundary yet.
 - Closures capture Copy values by value and non-Copy values by move. Inside a
   closure, non-Copy captures are read-only shared references; they cannot be
   moved out or mutated. Nested capturing closures and returning closures are
@@ -224,7 +227,7 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **116/116** pass, including trait objects, supertraits, owned
+Currently **119/119** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised

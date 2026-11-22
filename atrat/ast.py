@@ -360,6 +360,7 @@ class StructDecl:
     line: int = 0
     col: int = 0
     repr_c: bool = False
+    is_public: bool = False
 
 
 @dataclass
@@ -369,6 +370,7 @@ class EnumDecl:
     variants: list = field(default_factory=list)   # list[(str, list[ty])]
     line: int = 0
     col: int = 0
+    is_public: bool = False
 
 
 @dataclass
@@ -384,6 +386,7 @@ class TraitDecl:
     methods: list = field(default_factory=list)   # list[FnDecl] signatures
     line: int = 0
     col: int = 0
+    is_public: bool = False
 
 
 @dataclass
@@ -394,6 +397,7 @@ class ImplBlock:
     methods: list = field(default_factory=list)
     line: int = 0
     col: int = 0
+    is_public: bool = False
 
 
 @dataclass
@@ -407,3 +411,42 @@ class Import:
 @dataclass
 class Program:
     decls: list = field(default_factory=list)
+
+
+def stamp_sources(node, source: str):
+    """Attach the originating file to every AST node with a source position.
+
+    The loader merges files into one AST, so a node's source is needed for
+    module-visibility checks. `ty`/`scheme` are filled later by the checker and
+    deliberately skipped.
+    """
+    from dataclasses import fields as _fields
+    seen = set()
+
+    def walk(x):
+        if x is None or isinstance(x, (str, bytes, int, float, bool)):
+            return
+        if id(x) in seen:
+            return
+        if isinstance(x, (list, tuple)):
+            for item in x:
+                walk(item)
+            return
+        if isinstance(x, dict):
+            for item in x.values():
+                walk(item)
+            return
+        if hasattr(x, "__dataclass_fields__"):
+            seen.add(id(x))
+            if hasattr(x, "line"):
+                try:
+                    x.source = source
+                except Exception:
+                    pass
+            for f in _fields(x):
+                if f.name in ("ty", "scheme", "inst", "solved", "fn_ref",
+                              "source", "param_types"):
+                    continue
+                walk(getattr(x, f.name, None))
+
+    walk(node)

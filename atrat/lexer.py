@@ -50,6 +50,9 @@ def diagnostic_code(err) -> str:
         return "E0308"
     if "cannot capture" in msg or "nested capturing" in msg:
         return "E0310"
+    if ("private to module" in msg or "exposes private type" in msg
+            or "exposes private trait" in msg):
+        return "E0402"
     if ("implement trait" in msg or "already implements" in msg
             or "defined twice" in msg or "ambiguous method" in msg
             or "missing trait method" in msg or "cyclic supertrait" in msg

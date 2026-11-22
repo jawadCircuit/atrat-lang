@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 
+from . import ast as _ast
 from .check import BorrowError, TypeError_, check_program
 from .codegen import CodegenError, generate
 from .lexer import AtratError, diagnostic_code, tokenize
@@ -68,7 +69,9 @@ def _parse_with_offset(path: str, text: str, start: int):
     toks = tokenize(text, path)
     for t in toks:
         t.line += start - 1
-    return Parser(toks, path, text).parse_program()
+    prog = Parser(toks, path, text).parse_program()
+    _ast.stamp_sources(prog, os.path.realpath(path) if path != "<prelude>" else path)
+    return prog
 
 
 def _resolve_import(spec: str, base_dir: str, node) -> str:

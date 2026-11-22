@@ -198,6 +198,28 @@ before the arm expression.
 
 Test: `panic-match-move`.
 
+## 11. `pub` was parsed but ignored across files (fixed 0.8.8)
+
+```atrat
+# helper.atr
+fn hidden() -> i64:
+    return 9
+
+# main.atr
+import "helper"
+
+fn main() -> i32:
+    print(hidden())   # used to compile from another file
+    return 0
+```
+
+The loader merged every imported declaration into one flat AST and the checker
+had no module identity, so `pub` had no effect. Every AST node now carries its
+source file; a cross-file use of a non-`pub` function/type/trait is rejected
+with `E0402`, and public interfaces cannot expose private types.
+
+Tests: `private-function`, `private-struct`, `exposed-private-type`.
+
 ## Running them
 
 ```bash

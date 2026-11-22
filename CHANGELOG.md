@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.8 — cross-file visibility
+
+- Attach the originating file to every AST node while loading a program.
+- Enforce `pub` across files for functions, structs, enums, traits, impl methods,
+  supertraits and generic bounds. Same-file helpers remain private and usable.
+- Reject public declarations that expose a private type or trait in parameters,
+  return types, fields, enum variants or bounds.
+- Add `E0402` for private cross-file access and private types in public surfaces.
+- Add multi-file tests for public structs, private helpers, private functions,
+  private structs and exposed private types.
+- **119/119 tests** (56 run, 51 compile-fail, 8 panic-path, 4 multi-file).
+- Flat namespace, no per-field `pub`, no separate compilation or package
+  boundaries yet.
+
 ## 0.8.7 — panic cleanup
 
 - Added a runtime panic cleanup registry for live owning locals and function
