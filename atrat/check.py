@@ -1017,11 +1017,35 @@ class FnChecker:
             return e.ty
         self.err("invalid place expression", e)
 
+    def _owned_place_root(self, e):
+        while isinstance(e, (ast.Field, ast.Index, ast.Deref)):
+            e = e.base
+        return e
+
+    def require_owned_place(self, e, t, what):
+        """Reject field/method access on a temporary Box/Rc receiver.
+
+        A temporary `box(...)`/`rc(...)` has no binding that can carry a drop
+        flag. Allowing `.field`, `.method()` or `*temp` would leak the allocation
+        (and any owned payload). Requiring a local makes destruction exact.
+        """
+        if not (isinstance(t, TCon) and t.name in ("Box", "Rc")):
+            return
+        # Owned trait objects have dedicated temporary cleanup in codegen
+        # (emit_dyn_method drops the temporary Box after the call).
+        if (t.name == "Box" and len(t.args) == 1
+                and isinstance(t.args[0], TCon) and t.args[0].name == "dyn"):
+            return
+        if not isinstance(self._owned_place_root(e), ast.Name):
+            self.err(f"temporary `{t.show()}` used for {what}", e,
+                     "bind the Box/Rc to a local so it is dropped exactly once")
+
     def field_type(self, base, e):
         t = self.u.resolve_deep(base)
         if isinstance(t, TRef):
             t = self.u.resolve_deep(t.inner)
         if isinstance(t, TCon) and t.name in ("Box", "Rc"):
+            self.require_owned_place(e.base, t, "field access")
             t = self.u.resolve_deep(t.args[0])
         if isinstance(t, TCon):
             ft = self.m.struct_field(t, e.field)
@@ -1044,6 +1068,7 @@ class FnChecker:
     def deref_type(self, base, e):
         t = self.u.resolve_deep(base)
         if isinstance(t, TCon) and t.name in ("Box", "Rc"):
+            self.require_owned_place(e.base, t, "dereference")
             return t.args[0]
         if isinstance(t, TRef):
             return t.inner
@@ -1693,6 +1718,9 @@ class FnChecker:
                 self.u.unify(inner, d)
                 t = self.u.resolve_deep(t)
                 inner = t.inner if isinstance(t, TRef) else t
+
+        if isinstance(t, TCon) and t.name in ("Box", "Rc"):
+            self.require_owned_place(e.callee.base, t, "method access")
 
         boxed_ref = isinstance(t, TRef)
         boxed_dyn = (isinstance(inner, TCon) and inner.name == "Box"

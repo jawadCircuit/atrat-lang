@@ -1040,6 +1040,21 @@ fn main() -> i32:
         '7\n8\n8\nboxed\nboxed\n5\n2\n3\n2\nhi\n',
     ),
     (
+        'drop-temporary',
+        'fn main() -> i32:\n    let r = rc(1)\n    drop(rc(2))\n    drop(box(3))\n    drop("temporary".clone())\n    print(r.strong_count())\n    print("ok")\n    return 0\n',
+        '1\nok\n',
+    ),
+    (
+        'len-owned-temporary',
+        'fn main() -> i32:\n    print(len(to_str(12345)))\n    print(len("x".clone()))\n    return 0\n',
+        '5\n1\n',
+    ),
+    (
+        'temporary-aggregate-field',
+        'struct P:\n    s: String\n\nfn main() -> i32:\n    print(P { s: "x".clone() }.s)\n    print(P { s: "y".clone() }.s.len())\n    print(P { s: "z".clone() }.s.clone())\n    return 0\n',
+        'x\n1\nz\n',
+    ),
+    (
         "enum-method-payload-drop",
         """
 fn main() -> i32:
@@ -1177,6 +1192,24 @@ FAIL_CASES = [
         'fn main() -> i32:\n    let b: Box<Option<String>> = box(Some("x".clone()))\n    print(b.unwrap())\n    return 0\n',
         "borrow error",
         "cannot move a non-Copy value out of a Box",
+    ),
+    (
+        "temporary-box-method",
+        'struct P:\n    x: i64\n\nimpl P:\n    fn get(&self) -> i64:\n        return self.x\n\nfn main() -> i32:\n    print(box(P { x: 1 }).get())\n    return 0\n',
+        "type error",
+        "temporary `Box<P>` used for method access",
+    ),
+    (
+        "temporary-box-field",
+        'struct P:\n    x: i64\n\nfn main() -> i32:\n    print(box(P { x: 1 }).x)\n    return 0\n',
+        "type error",
+        "temporary `Box<P>` used for field access",
+    ),
+    (
+        "temporary-box-deref",
+        'struct P:\n    x: i64\n\nfn main() -> i32:\n    print((*box(P { x: 5 })).x)\n    return 0\n',
+        "type error",
+        "temporary `Box<P>` used for dereference",
     ),
     (
         "use-after-move",

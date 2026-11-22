@@ -123,11 +123,27 @@ print((*b).len())
 drop(b)
 ```
 
-`Box<T>` is moved, not copied. Field and method access auto-dereferences, so
-`boxed_string.len()` and `boxed_point.get()` mean `(*boxed_string).len()` and
-`(*boxed_point).get()`. Dereferencing a `Box` for a non-`Copy` value cannot move
-the payload out; borrow it, clone the payload, or consume the box explicitly.
-A `Box<dyn Trait>` is the owned trait-object form.
+`Box<T>` is moved, not copied. Field, method and dereference access on a
+**bound** box auto-dereferences, so `boxed_string.len()` and
+`boxed_point.get()` mean `(*boxed_string).len()` and `(*boxed_point).get()`.
+Dereferencing a `Box` for a non-`Copy` value cannot move the payload out; borrow
+it, clone the payload, or consume the box explicitly. A `Box<dyn Trait>` is the
+owned trait-object form and its temporary method calls have dedicated cleanup.
+
+A temporary `box(...)` or `rc(...)` cannot be used as a field/method/deref
+receiver: there is no binding to carry its drop flag, so doing so would leak the
+allocation. Bind it first:
+
+```atrat
+let boxed: Box<Point> = box(Point { x: 1 })
+print(boxed.x)
+
+# rejected: no owner to drop the temporary
+# print(box(Point { x: 1 }).x)
+```
+
+Owned temporaries can still be passed to functions or explicitly dropped:
+`drop(box(...))`, `drop(rc(...))` and `drop(make_string())` are supported.
 
 ## `Rc<T>`
 

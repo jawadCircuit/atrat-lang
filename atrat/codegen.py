@@ -1519,7 +1519,14 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 raise CodegenError(f"internal: unknown variant {e.base.name}.{e.field}")
             return self.emit_variant_ctor(ref, [], e.ty)
         bt = self.concrete(e.base.ty)
-        base = self.emit_expr(e.base, consume=False)
+        if isinstance(e.base, (ast.Name, ast.Field, ast.Index, ast.Deref)):
+            base = self.emit_expr(e.base, consume=False)
+        else:
+            # A field read from a temporary aggregate must not evaluate the
+            # aggregate twice or leak its other fields. Materialise it once and
+            # schedule its drop for the end of the statement.
+            _, tmp = self.materialize(e.base, "recv")
+            base = tmp
         if consume and not self.is_copy(e.ty):
             root = self.root_cvar(e.base)
             if root and self.root_has_flag(root):
@@ -1584,26 +1591,30 @@ static inline void atr_list_{key}_free({cname}* self) {{
                     return f"atr_string_push_{_push_suffix(inner)}(&{buf}, *{c});"
             show = self.ensure_show(inner)
             return f"{show}(&{buf}, {c});"
-        c = self.emit_expr(e, consume=False)
-        if isinstance(t, TCon):
+        if isinstance(t, TCon) and t.name == "String":
+            # Address the place first: a temporary aggregate field must be
+            # materialised exactly once, not once for the address and again
+            # for a value that this branch never uses.
+            addr = self.addr_if_place(e)
+            if addr:
+                return f"atr_string_push_bytes(&{buf}, ({addr})->ptr, ({addr})->len);"
+            c = self.emit_expr(e, consume=False)
+            tmp = self.temp("sv")
+            return (f"{{ AtrString {tmp} = {c}; "
+                    f"atr_string_push_bytes(&{buf}, {tmp}.ptr, {tmp}.len); "
+                    f"atr_string_free(&{tmp}); }}")
+        if isinstance(t, TCon) and (t.name in ("str", "char") or t.name in C_PRIMS):
+            c = self.emit_expr(e, consume=False)
             if t.name == "str":
                 return f"atr_string_push_bytes(&{buf}, ({c}).ptr, ({c}).len);"
-            if t.name == "String":
-                addr = self.addr_if_place(e)
-                if addr:
-                    return f"atr_string_push_bytes(&{buf}, ({addr})->ptr, ({addr})->len);"
-                tmp = self.temp("sv")
-                return (f"{{ AtrString {tmp} = {c}; "
-                        f"atr_string_push_bytes(&{buf}, {tmp}.ptr, {tmp}.len); "
-                        f"atr_string_free(&{tmp}); }}")
             if t.name == "char":
                 return f"atr_string_push_char(&{buf}, {c});"
-            if t.name in C_PRIMS:
-                return f"atr_string_push_{_push_suffix(t)}(&{buf}, {c});"
+            return f"atr_string_push_{_push_suffix(t)}(&{buf}, {c});"
         show = self.ensure_show(t)
         addr = self.addr_if_place(e)
         if addr:
             return f"{show}(&{buf}, {addr});"
+        c = self.emit_expr(e, consume=False)
         tmp = self.temp("v")
         ct = self.ctype(t)
         d = self.ensure_drop(t)
@@ -2045,6 +2056,8 @@ static inline void atr_list_{key}_free({cname}* self) {{
         t = self.concrete(e.callee.base.ty)
         inner = self.concrete(t.inner) if isinstance(t, TRef) else t
         base = e.callee.base
+        if method == "clone":
+            return f"atr_string_from_view({self.str_view(base)})"
         if isinstance(inner, TCon) and inner.name == "String":
             if isinstance(t, TRef):
                 addr = self.emit_expr(base, consume=False)
@@ -2058,8 +2071,6 @@ static inline void atr_list_{key}_free({cname}* self) {{
             size = f"((*{self.emit_expr(base, consume=False)}).len)"
         else:
             size = f"(({self.emit_expr(base, consume=False)}).len)"
-        if method == "clone":
-            return f"atr_string_from_view({self.str_view(base)})"
         return size if method == "len" else f"({size} == 0)"
 
     def emit_list_method(self, e, method: str) -> str:
@@ -2115,8 +2126,13 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 if isinstance(orig, TRef):
                     addr = self.emit_expr(e.args[0], consume=False)
                 else:
-                    addr = self.addr_if_place(e.args[0]) or \
-                        f"(&({self.emit_expr(e.args[0], consume=False)}))"
+                    addr = self.addr_if_place(e.args[0])
+                    if addr is None:
+                        # `len("x".clone())` / `len(to_str(n))`: materialise
+                        # the owned temporary so `&tmp` is valid and schedule
+                        # its single drop.
+                        _, tmp = self.materialize(e.args[0], "str")
+                        addr = f"&{tmp}"
                 return f"(({addr})->len)"
             if isinstance(t, TCon) and t.name == "str":
                 orig = self.concrete(e.args[0].ty)
@@ -2141,11 +2157,28 @@ static inline void atr_list_{key}_free({cname}* self) {{
         if name == "sqrt":
             return f"sqrt({self.emit_expr(e.args[0], consume=True)})"
         if name == "drop":
-            t = self.concrete(e.args[0].ty)
+            arg = e.args[0]
+            t = self.concrete(arg.ty)
             d = self.ensure_drop(t)
             if not d:
                 return "((void)0)"
-            return f"({{ {d}(&({self.emit_expr(e.args[0], consume=False)})); ((void)0); }})"
+            # Dropping a whole local is final: clear its drop flag so scope
+            # exit does not call the destructor a second time. Partial places
+            # (fields/elements) are left to their owner's idempotent cleanup.
+            if isinstance(arg, ast.Name):
+                loc = self.lookup_local(arg.name)
+                if loc is not None and self.root_has_flag(loc[0]):
+                    self.mark_moved(loc[0])
+            addr = self.addr_if_place(arg)
+            if addr is None:
+                # `drop(box(...))`, `drop(rc(...))`, `drop(make_string())`:
+                # materialise the temporary so its address is valid, then drop
+                # it once. Do not schedule a second drop.
+                tmp = self.temp("drop")
+                val = self.emit_expr(arg, consume=False)
+                self.pre.append(f"{self.ctype(t)} {tmp} = {val};")
+                addr = f"&{tmp}"
+            return f"({{ {d}({addr}); ((void)0); }})"
         if name == "box":
             t = self.concrete(e.ty)
             c = self.ctype(t)

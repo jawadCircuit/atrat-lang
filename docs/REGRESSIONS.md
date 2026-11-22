@@ -100,6 +100,58 @@ the payload at zero, and releases the count allocation.
 
 Test: `rc-clone-count`, `rc-drop-count`.
 
+## 6. Temporary Box/Rc receivers leaked (fixed 0.8.6)
+
+```atrat
+fn main() -> i32:
+    let r = rc(1)
+    print(box(Some(r.clone())).is_some())
+    print(r.strong_count())      # stayed 2: the temporary Box never dropped
+    return 0
+```
+
+A temporary `box(...)`/`rc(...)` had no local drop flag. Field, method and
+dereference access on such a temporary is now rejected; bind it first.
+
+Tests: `temporary-box-method`, `temporary-box-field`, `temporary-box-deref`.
+
+## 7. Owned temporaries in `drop` and `len` emitted invalid C (fixed 0.8.6)
+
+```atrat
+fn main() -> i32:
+    drop(rc(1))
+    drop(box(2))
+    drop("x".clone())
+    print(len("x".clone()))
+    print(len(to_str(12345)))
+    return 0
+```
+
+`drop` and `len` took the address of a statement-expression value, so GCC
+reported `lvalue required as unary '&' operand`. Owned temporaries are now
+materialised once and dropped exactly once.
+
+Tests: `drop-temporary`, `len-owned-temporary`.
+
+## 8. Temporary struct field reads were evaluated twice (fixed 0.8.6)
+
+```atrat
+struct P:
+    s: String
+
+fn main() -> i32:
+    print(P { s: "x".clone() }.s)
+    print(P { s: "y".clone() }.s.len())
+    return 0
+```
+
+The field read emitted the aggregate once for the value and again for its
+address, leaking/double-evaluating the temporary. Field access now materialises
+the aggregate once and drops it at statement end.
+
+Test: `temporary-aggregate-field`.
+
+
 ## Running them
 
 ```bash

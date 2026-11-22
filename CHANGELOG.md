@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.6 — temporary ownership stabilization
+
+- Reject field/method/deref access on temporary `Box`/`Rc` receivers. The old
+  code could compile a temporary `box(...)`/`rc(...)` without a binding and
+  leak the allocation and its payload. Owned trait objects remain supported via
+  their dedicated temporary cleanup.
+- Fix `drop(box(...))`, `drop(rc(...))`, `drop(make_string())` and other
+  owned temporaries: materialise the value once, take a valid address, and drop
+  it exactly once instead of emitting invalid C.
+- Fix `len("x".clone())` / `len(to_str(n))`: owned string temporaries are now
+  materialised, measured and dropped instead of producing `&({ ... })` invalid
+  C.
+- Fix field reads from temporary structs: evaluate the aggregate once and drop
+  its unused fields at statement end.
+- Mark a whole local's drop flag false after explicit `drop(local)`, so scope
+  exit does not call its destructor a second time.
+- Add positive and negative regression tests for all of the above.
+- 111/111 tests pass.
+
 ## 0.8.5 — Box method auto-deref
 
 - Method calls on `Box<T>` now auto-dereference: `boxed_string.len()`,
@@ -9,7 +28,7 @@
   with `E0300`; borrow/clone the payload or consume the box explicitly.
 - Added positive and negative tests for `Box<String>`, `Box<List<T>>`,
   `Box<Struct>` and `Box<Option<String>>`.
-- 105/105 tests pass.
+- 105/105 tests passed at that release.
 - Added `docs/ECOSYSTEM.md`: a deliberately deferred package-manager and
   library-ecosystem plan. No package-manager code is included.
 
@@ -42,7 +61,7 @@
   **not** run on panic; this is documented as a known limitation.
 - Mutation fuzz smoke now runs 500 generated cases; sanitizer and optimisation
   matrix jobs include lifecycle examples.
-- 105/105 end-to-end tests pass.
+- 111/111 end-to-end tests pass.
 
 ## 0.8.2 — enum payload cleanup
 
