@@ -471,13 +471,13 @@ unsafe:
 | `print(x, ...)` | space-separated values, newline |
 | `println(x, ...)` | alias for `print` |
 | `write(x, ...)` | like `print`, without the newline |
-| `panic(msg)` | print `atrat panic: msg` and abort |
+| `panic(msg)` | print `atrat panic: msg`, clean up live owners, exit 101 |
 | `assert(cond, msg?)` | abort if the condition is false |
 | `len(x)` | length of `List`, `str`, `String` |
 | `to_str(x)` | owned `String` using the value's `show` form |
 | `min(a, b)`, `max(a, b)`, `abs(x)` | numeric helpers |
 | `sqrt(x)` | `f64` square root |
-| `exit(code)` | terminate the process |
+| `exit(code)` | terminate immediately; bypasses Atrat destructors and panic cleanup |
 | `drop(x)` | drop a value early |
 | `read_file(path)` | `Result<String, String>` |
 | `write_file(path, text)` | `Result<(), String>` |
@@ -528,14 +528,20 @@ error[E0303]: borrow error: use of moved value `s`
 Error kinds: `lex error`, `parse error`, `type error`, `borrow error`,
 `codegen error`. See `docs/DIAGNOSTICS.md` for the code table.
 
-Runtime traps (these abort with `atrat panic: ...`): list index out of bounds,
-division/modulo by zero, integer overflow in `INT_MIN / -1`, shift out of range,
-failed `assert`, explicit `panic`, and allocation failure.
+Runtime traps print `atrat panic: ...`, clean up live owning locals and function
+parameters in reverse registration order, and terminate with status **101**:
+list index out of bounds, division/modulo by zero, integer overflow in
+`INT_MIN / -1`, shift out of range, failed `assert`, explicit `panic`, and
+allocation failure.
 
-**Panics abort; Atrat does not unwind.** Locals are not dropped when a panic
-occurs, so destructors cannot be used for panic cleanup. Normal returns,
-branches, loops and explicit `drop` do run destructors exactly once. This is a
-known limitation, not Rust-style unwinding.
+**Panic cleanup is not unwinding.** The process does not return to Atrat code,
+there is no `catch`/`recover`, and a panic cannot be intercepted. Objects that
+are only expression temporaries, or that are still under construction, are not
+guaranteed to be destroyed. A panic raised by a destructor during cleanup exits
+immediately without running the remaining destructors. Normal returns, branches,
+loops and explicit `drop` run destructors exactly once; panic cleanup covers
+registered live locals and parameters. This is documented rather than presented
+as Rust-style unwinding.
 
 ## 12. Grammar sketch
 

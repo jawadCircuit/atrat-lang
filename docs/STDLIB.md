@@ -170,9 +170,9 @@ no `Rc::get_mut` yet. `Arc`, threads and `Mutex` do not exist yet.
 | Function | Meaning |
 | --- | --- |
 | `print(...)`, `println(...)`, `write(...)` | Formatted output; `write` omits the newline |
-| `panic(message)` | Print to stderr and abort the process |
+| `panic(message)` | Print to stderr, clean up live owners, exit 101 |
 | `assert(condition, message?)` | Panic when the condition is false |
-| `exit(code)` | Exit the process |
+| `exit(code)` | Exit immediately; bypasses Atrat destructors and panic cleanup |
 | `len(value)` | Length of a string or list |
 | `to_str(value)` | Format a value as `String` |
 | `min(a, b)`, `max(a, b)` | Numeric minimum/maximum |
@@ -199,11 +199,12 @@ no `Rc::get_mut` yet. `Arc`, threads and `Mutex` do not exist yet.
   Use a complete struct literal or assign the whole value.
 - `Box`/`Rc` payload destructors run recursively, including nested `Option`,
   `Result`, struct fields and trait objects.
-- **Panics abort the process; Atrat does not unwind and does not run local
-  destructors on a panic.** The OS reclaims process memory. Do not rely on
-  destructors for cleanup after `panic`, `assert`, `unwrap`, division by zero
-  or another fatal runtime check. This is a real limitation, not Rust-style
-  unwinding.
+- **Panics clean up live owning locals and function parameters, then terminate
+  with status 101.** They do not unwind and cannot be caught. Expression
+  temporaries that never become a local and values still under construction may
+  leak; a panic inside a destructor stops the remaining cleanup. Do not use
+  panic cleanup as a substitute for normal control flow. Normal returns and
+  explicit `drop` still provide exactly-once destruction.
 
 ## Trait objects
 

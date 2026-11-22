@@ -96,6 +96,9 @@ class Codegen:
         self.drop_names: dict[str, str] = {}
         self.drop_protos: list[str] = []
         self.drop_defs: list[str] = []
+        self.cleanup_names: dict[str, str] = {}
+        self.cleanup_protos: list[str] = []
+        self.cleanup_defs: list[str] = []
         self.list_pending: list = []
         self.forwarded: set = set()
         self.eq_names: dict[str, str] = {}
@@ -718,6 +721,35 @@ static inline void atr_list_{key}_free({cname}* self) {{
 }}
 """)
 
+    def ensure_cleanup(self, t) -> str:
+        """Return a void(void*) thunk that drops a value of type `t`.
+
+        The panic registry stores untyped pointers, while generated destructors
+        take typed pointers, so each owning type gets a small cast thunk.
+        """
+        d = self.ensure_drop(t)
+        if not d:
+            return ""
+        t = self.concrete(t)
+        key = self.mangle(t)
+        if key in self.cleanup_names:
+            return self.cleanup_names[key]
+        name = f"atr_cleanup_{key}"
+        self.cleanup_names[key] = name
+        c = self.ctype(t)
+        self.cleanup_protos.append(
+            f"static void {name}(void* p);\n")
+        self.cleanup_defs.append(
+            f"static void {name}(void* p) {{ {d}(({c}*)p); }}\n")
+        return name
+
+    def cleanup_register(self, cvar: str, t) -> str:
+        fn = self.ensure_cleanup(t)
+        return f"atr_cleanup_register(&{cvar}, {fn});" if fn else ""
+
+    def cleanup_unregister(self, cvar: str) -> str:
+        return f"atr_cleanup_unregister(&{cvar});"
+
     def ensure_drop(self, t) -> str:
         t = self.concrete(t)
         if self.is_copy(t):
@@ -951,12 +983,15 @@ static inline void atr_list_{key}_free({cname}* self) {{
         out.extend(self.helper_defs)
         out.append("\n/* ---- prototypes ---- */\n")
         out.extend(self.fn_protos.values())
+        out.extend(self.cleanup_protos)
         out.append("\n/* ---- equality ---- */\n")
         out.extend(self.eq_defs)
         out.append("\n/* ---- show ---- */\n")
         out.extend(self.show_defs)
         out.append("\n/* ---- drop ---- */\n")
         out.extend(self.drop_defs)
+        out.append("\n/* ---- panic cleanup ---- */\n")
+        out.extend(self.cleanup_defs)
         out.append("\n/* ---- functions ---- */\n")
         out.extend(self.fn_bodies)
         out.append("\n/* ---- entry point ---- */\n")
@@ -965,11 +1000,12 @@ static inline void atr_list_{key}_free({cname}* self) {{
             if isinstance(ret, TCon) and ret.name == "unit":
                 out.append("int main(int argc, char** argv) { "
                            "atr_argc = argc; atr_argv = argv; "
-                           "atr_fn_main(); return 0; }\n")
+                           "atr_fn_main(); atr_cleanup_dispose(); return 0; }\n")
             else:
                 out.append("int main(int argc, char** argv) { "
-                           "atr_argc = argc; atr_argv = argv; "
-                           "return (int)atr_fn_main(); }\n")
+                           "int _r; atr_argc = argc; atr_argv = argv; "
+                           "_r = (int)atr_fn_main(); atr_cleanup_dispose(); "
+                           "return _r; }\n")
         return "".join(out)
 
     def emit_fn_body(self, info: FnInfo, mapping: dict, cname: str):
@@ -996,6 +1032,7 @@ static inline void atr_list_{key}_free({cname}* self) {{
         for p, pt in zip(info.decl.params, params):
             if not self.is_copy(pt):
                 lines.append(f"    bool a_v_{p.name} = true;")
+                lines.append(f"    {self.cleanup_register('v_' + p.name, pt)}")
         body_stmts = info.decl.body
         for idx, s in enumerate(body_stmts):
             implicit = (idx == len(body_stmts) - 1
@@ -1061,6 +1098,10 @@ static inline void atr_list_{key}_free({cname}* self) {{
         return False
 
     def mark_moved(self, cvar: str):
+        # Ownership leaves the local now. Unregister immediately (not in the
+        # deferred statement tail) so a panic in a callee cannot make both the
+        # caller and callee destroy the same value.
+        self.pre.append(self.cleanup_unregister(cvar))
         self.pending.append(f"{self.alive_flag(cvar)} = false;")
 
     def materialize(self, e, prefix="tmp"):
@@ -1070,9 +1111,12 @@ static inline void atr_list_{key}_free({cname}* self) {{
         val = self.emit_expr(e, consume=False)
         self.pre.append(f"{c} {tmp} = {val};")
         if not self.is_copy(t):
+            fn = self.ensure_cleanup(t)
             d = self.ensure_drop(t)
-            if d:
-                self.pending.append(f"{d}(&{tmp});")
+            if fn and d:
+                self.pre.append(f"atr_cleanup_register(&{tmp}, {fn});")
+                self.pending.append(
+                    f"{self.cleanup_unregister(tmp)} {d}(&{tmp});")
         return t, tmp
 
     def root_cvar(self, e):
@@ -1089,7 +1133,9 @@ static inline void atr_list_{key}_free({cname}* self) {{
             for cvar, t in reversed(sc):
                 d = self.ensure_drop(t)
                 if d:
-                    lines.append(f"if ({self.alive_flag(cvar)}) {{ {d}(&{cvar}); }}")
+                    lines.append(
+                        f"if ({self.alive_flag(cvar)}) {{ "
+                        f"{self.cleanup_unregister(cvar)} {d}(&{cvar}); }}")
         return lines
 
     # ------------------------------------------------------------------
@@ -1122,6 +1168,8 @@ static inline void atr_list_{key}_free({cname}* self) {{
             if not self.is_copy(t):
                 out.append(f"{pad}bool {self.alive_flag(cname)} = "
                            f"{'true' if s.init is not None else 'false'};")
+                if s.init is not None:
+                    out.append(f"{pad}{self.cleanup_register(cname, t)}")
                 self.drop_scopes[-1].append((cname, t))
             return out
 
@@ -1234,11 +1282,14 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 moved_self = f"{self.alive_flag(cvar)} = false;"
                 if moved_self in self.pending:
                     self.pending.remove(moved_self)
+                    out.append(f"{pad}{self.cleanup_unregister(cvar)}")
                 else:
                     out.append(f"{pad}if ({self.alive_flag(cvar)}) "
-                               f"{{ {self.ensure_drop(tt)}(&{cvar}); }}")
+                               f"{{ {self.cleanup_unregister(cvar)} "
+                               f"{self.ensure_drop(tt)}(&{cvar}); }}")
                 out.append(f"{pad}{cvar} = {tmp};")
                 out.append(f"{pad}{self.alive_flag(cvar)} = true;")
+                out.append(f"{pad}{self.cleanup_register(cvar, tt)}")
                 return out
             val = self.emit_expr(s.value, consume=True)
             if self.is_copy(t):
@@ -1261,9 +1312,11 @@ static inline void atr_list_{key}_free({cname}* self) {{
             loc = self.lookup_local(target.name)
             cvar = loc[0]
             out.append(f"{pad}    if ({self.alive_flag(cvar)}) "
-                       f"{{ {self.ensure_drop(t)}(&{cvar}); }}")
+                       f"{{ {self.cleanup_unregister(cvar)} "
+                       f"{self.ensure_drop(t)}(&{cvar}); }}")
             out.append(f"{pad}    {cvar} = {tmp};")
-            out.append(f"{pad}    {self.alive_flag(cvar)} = true; }}")
+            out.append(f"{pad}    {self.alive_flag(cvar)} = true;")
+            out.append(f"{pad}    {self.cleanup_register(cvar, t)} }}")
         else:
             out.append(f"{pad}    {self.ensure_drop(t)}(&({place}));")
             out.append(f"{pad}    ({place}) = {tmp}; }}")
@@ -1813,8 +1866,11 @@ static inline void atr_list_{key}_free({cname}* self) {{
         pre = list(self.pre)
         pend = list(self.pending)
         drops = self.emit_all_drops(0)
-        lines = [f"    bool {self.alive_flag(pn)} = true;"
-                 for _, pn, pt, _ in params if not self.is_copy(pt)]
+        lines = []
+        for _, pn, pt, _ in params:
+            if not self.is_copy(pt):
+                lines.append(f"    bool {self.alive_flag(pn)} = true;")
+                lines.append(f"    {self.cleanup_register(pn, pt)}")
         lines.extend("    " + p for p in pre)
         lines.append(f"    {rc} _lambda_ret = {val};")
         lines.extend("    " + p for p in pend)
@@ -1867,8 +1923,11 @@ static inline void atr_list_{key}_free({cname}* self) {{
         pre = list(self.pre)
         pend = list(self.pending)
         drops = self.emit_all_drops(0)
-        lines = [f"    bool {self.alive_flag(pn)} = true;"
-                 for _, pn, pt, _ in params if not self.is_copy(pt)]
+        lines = []
+        for _, pn, pt, _ in params:
+            if not self.is_copy(pt):
+                lines.append(f"    bool {self.alive_flag(pn)} = true;")
+                lines.append(f"    {self.cleanup_register(pn, pt)}")
         lines.extend("    " + p for p in pre)
         lines.append(f"    {rc} _lambda_ret = {val};")
         lines.extend("    " + p for p in pend)
@@ -1923,9 +1982,11 @@ static inline void atr_list_{key}_free({cname}* self) {{
         t, tmp = self.materialize(base, "en")
         if consumes and not self.is_copy(t):
             d = self.ensure_drop(t)
-            line = f"{d}(&{tmp});"
-            if line in self.pending:
-                self.pending.remove(line)
+            # Ownership moves out of the temporary. Cancel both its normal
+            # statement-end drop and its panic-cleanup registration.
+            self.pre.append(self.cleanup_unregister(tmp))
+            self.pending[:] = [
+                p for p in self.pending if f"{d}(&{tmp})" not in p]
         return f"(&{tmp})"
 
     def _drop_enum_variant(self, et: TCon, variant: str) -> str:
@@ -1985,30 +2046,40 @@ static inline void atr_list_{key}_free({cname}* self) {{
         if method == "unwrap_or":
             tmp = self.temp("en")
             base_pre = list(self.pre)
+            base_pending = list(self.pending)
             self.pre = []
+            self.pending = []
             dflt = self.emit_expr(e.args[0], consume=True)
             dpre = list(self.pre)
+            dpend = list(self.pending)
             self.pre = base_pre
+            self.pending = base_pending
             drop_bad = self._drop_enum_variant(et, bad_name)
             bad = (drop_bad + " ") if drop_bad else ""
             return (f"({{ {' '.join(base_pre)} {c}* _p = {addr}; "
                     f"{self.ctype(self.concrete(e.ty))} {tmp}; "
                     f"if (_p->tag == {ok_i}) {{ {tmp} = _p->u.V_{ok_name}.v0; }} "
-                    f"else {{ {' '.join(dpre)} {tmp} = {dflt}; {bad}}} {tmp}; }})")
+                    f"else {{ {' '.join(dpre)} {tmp} = {dflt}; "
+                    f"{' '.join(dpend)} {bad}}} {tmp}; }})")
         if method == "ok_or":
             tmp = self.temp("en")
             base_pre = list(self.pre)
+            base_pending = list(self.pending)
             self.pre = []
+            self.pending = []
             errv = self.emit_expr(e.args[0], consume=True)
             dpre = list(self.pre)
+            dpend = list(self.pending)
             self.pre = base_pre
+            self.pending = base_pending
             rc = self.ctype(self.concrete(e.ty))
             mk_ok = self.mk_ctor(self.concrete(e.ty), "Ok",
                                  [f"_p->u.V_{ok_name}.v0"])
             mk_err = self.mk_ctor(self.concrete(e.ty), "Err", [errv])
             return (f"({{ {' '.join(base_pre)} {c}* _p = {addr}; {rc} {tmp}; "
                     f"if (_p->tag == {ok_i}) {{ {tmp} = {mk_ok}; }} "
-                    f"else {{ {' '.join(dpre)} {tmp} = {mk_err}; }} {tmp}; }})")
+                    f"else {{ {' '.join(dpre)} {tmp} = {mk_err}; "
+                    f"{' '.join(dpend)} }} {tmp}; }})")
         if method in ("ok", "err"):
             src_variant = ok_name if method == "ok" else bad_name
             src_i = ok_i if method == "ok" else bad_i
@@ -2297,6 +2368,13 @@ static inline void atr_list_{key}_free({cname}* self) {{
             for d in decls:
                 body.append("    " + d)
             val = self.emit_expr(arm.body, consume=True)
+            # `emit_expr` can add declarations/registrations to `pre` (for
+            # materialised temporaries and for moves that unregister owners).
+            # They belong before the arm value, not in the outer statement.
+            arm_late = self.pre[base_pre:]
+            del self.pre[base_pre:]
+            for p in arm_late:
+                body.append("    " + p)
             if is_unit:
                 body.append(f"    {val};")
             else:
@@ -2329,6 +2407,7 @@ static inline void atr_list_{key}_free({cname}* self) {{
             decls.append(f"{self.ctype(ty)} {cname} = {vex};")
             if not self.is_copy(ty):
                 decls.append(f"bool {self.alive_flag(cname)} = true;")
+                decls.append(self.cleanup_register(cname, ty))
                 self.drop_scopes[-1].append((cname, ty))
             return
         if isinstance(pat, ast.PatLit):

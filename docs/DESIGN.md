@@ -88,8 +88,9 @@ the numbers.
 
 ### Lua lightweight
 
-The runtime is a single ~250-line C header embedded in the compiler. Its jobs:
-allocation, panic, a `{ptr,len,cap}` string builder, printing and formatting.
+The runtime is a single ~360-line C header embedded in the compiler. Its jobs:
+allocation, panic plus a small cleanup registry, a `{ptr,len,cap}` string
+builder, printing and formatting.
 Everything else is generated per program. There is no scheduler, no GC, no
 module loader, no metadata, no reflection tables.
 

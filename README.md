@@ -41,8 +41,8 @@ below are part of the project, not fine print.
 
 Additional built-in conveniences include `read_file`, `write_file`, `env`,
 `args`, `now_ms`, `expr?`, `Option`/`Result` methods, capturing closures,
-`Box<T>`, `Rc<T>`, references in structs, `&dyn Trait`, generic impls and
-multi-file imports.
+`Box<T>`, `Rc<T>`, references in structs, `&dyn Trait`, generic impls,
+multi-file imports, and panic cleanup for live owners (followed by exit 101).
 
 This repository contains a working compiler, a borrow checker, a type checker, a
 C backend, a standard prelude, examples and an end-to-end test suite. It is an
@@ -82,11 +82,12 @@ point, and the generated C is available with `atrc emit-c`.
 | Ownership / borrow checker | **Working**, conservative by design |
 | Native C backend | **Working**, GCC/Clang |
 | Recursive types, generics, traits, supertraits, `dyn` and `Box<dyn>` | **Working** for the documented subset |
+| Panic semantics | **Cleanup, not unwinding**: live owners are destroyed, then exit 101; no catch/recover |
 | Standard library | **Minimal** |
 | Modules / packaging / tooling | **Early** |
 | Production readiness | **No** |
 
-There are **111 end-to-end tests** covering successful programs, exact stdout,
+There are **116 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -165,6 +166,12 @@ production compiler**. The important current gaps:
   moved out or mutated. Nested capturing closures and returning closures are
   not supported yet.
 - `Box<T>` and read-only `Rc<T>` exist; `Arc`, interior mutability and `Mutex` do not.
+- Panics clean up live owning locals and function parameters, then terminate with
+  status 101. They do not unwind, cannot be caught, and expression temporaries
+  that never become a local may still leak. A panic inside a destructor exits
+  without running the remaining cleanup. Normal returns and explicit `drop`
+  remain the complete, exactly-once paths; panic cleanup is best-effort for
+  registered locals and parameters.
 - `match` has no guards, ranges or or-patterns yet.
 - `unsafe:` is a block, not a function marker (`unsafe fn` is not implemented).
 - The C backend relies on GCC/Clang statement expressions.
@@ -189,7 +196,7 @@ atrat/
   check.py               declaration collection, HM inference, exhaustiveness,
                          borrow checker
   codegen.py             monomorphising C99 backend
-  runtime.py             embedded ~250-line C runtime
+  runtime.py             embedded ~360-line C runtime
   prelude.atr            Option<T> and Result<T, E>, written in Atrat
   driver.py              CLI, diagnostics, native compilation
 examples/                runnable feature demos
@@ -209,7 +216,7 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **111/111** pass, including trait objects, supertraits, owned
+Currently **116/116** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised

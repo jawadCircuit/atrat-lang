@@ -152,6 +152,52 @@ the aggregate once and drops it at statement end.
 Test: `temporary-aggregate-field`.
 
 
+## 9. Panics leaked every live owner (fixed 0.8.7)
+
+```atrat
+struct Holder:
+    name: String
+    boxed: Box<String>
+
+fn main() -> i32:
+    let a = "alpha".clone()
+    let b = box("beta".clone())
+    let h = Holder { name: "holder".clone(), boxed: box("payload".clone()) }
+    let l = ["one".clone(), "two".clone()]
+    panic("cleanup boom")
+    return 0
+```
+
+The old runtime called `abort()` immediately, so none of those owning locals was
+destroyed. Atrat now registers live owning locals and parameters, moves and
+normal scope exits unregister them, and a panic destroys the remaining entries
+in reverse order before exiting with status 101.
+
+Test: `panic-cleanup`.
+
+## 10. A moved match binding stayed registered during a callee panic (fixed 0.8.7)
+
+```atrat
+fn consume(s: String) -> i32:
+    panic("match boom")
+    return 0
+
+fn main() -> i32:
+    let x = Some("payload".clone())
+    let n = match x:
+        Some(v) -> consume(v)
+        None -> 0
+    return n
+```
+
+The match arm moved `v` into `consume` but the arm's deferred code was emitted
+after the call, leaving `v` registered while the callee's parameter was also
+registered. A panic in the callee would then destroy the same `String` twice.
+Moves now unregister before the call, and late arm declarations are emitted
+before the arm expression.
+
+Test: `panic-match-move`.
+
 ## Running them
 
 ```bash

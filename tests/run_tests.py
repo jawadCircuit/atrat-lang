@@ -1984,6 +1984,87 @@ fn main() -> i32:
 """,
         "integer division by zero",
     ),
+    (
+        "panic-cleanup",
+        """
+struct Holder:
+    name: String
+    boxed: Box<String>
+
+fn main() -> i32:
+    let a = "alpha".clone()
+    let b = box("beta".clone())
+    let c = rc("gamma".clone())
+    let h = Holder { name: "holder".clone(), boxed: box("payload".clone()) }
+    let l = ["one".clone(), "two".clone()]
+    panic("cleanup boom")
+    print("unreachable")
+    return 0
+""",
+        "cleanup boom",
+    ),
+    (
+        "panic-nested-cleanup",
+        """
+struct Holder:
+    name: String
+    boxed: Box<String>
+
+fn inner(h: Holder, s: String) -> i32:
+    let l = ["inner".clone()]
+    panic("nested boom")
+    return 0
+
+fn main() -> i32:
+    let h = Holder { name: "outer".clone(), boxed: box("payload".clone()) }
+    let s = "argument".clone()
+    inner(h, s)
+    print("unreachable")
+    return 0
+""",
+        "nested boom",
+    ),
+    (
+        "panic-match-move",
+        """
+fn consume(s: String) -> i32:
+    panic("match boom")
+    return 0
+
+fn main() -> i32:
+    let x = Some("payload".clone())
+    let n = match x:
+        Some(v) -> consume(v)
+        None -> 0
+    print("unreachable {n}")
+    return 0
+""",
+        "match boom",
+    ),
+    (
+        "panic-loop-cleanup",
+        """
+fn main() -> i32:
+    for i in 0..=2:
+        let s = "loop".clone()
+        if i == 1:
+            panic("loop boom")
+    print("unreachable")
+    return 0
+""",
+        "loop boom",
+    ),
+    (
+        "panic-result-err",
+        """
+fn main() -> i32:
+    let r: Result<i32, String> = Err("bad".clone())
+    let x = r.unwrap()
+    print("unreachable {x}")
+    return 0
+""",
+        "called unwrap on an Err value",
+    ),
 ]
 
 MULTI_CASES = [
@@ -2104,13 +2185,18 @@ def main() -> int:
             continue
         proc = run([exe])
         combined = proc.stdout + proc.stderr
-        if proc.returncode == 0 or needle not in combined or "unreachable" in proc.stdout:
-            print(f"FAIL {name}: expected a fatal panic, got exit {proc.returncode}")
+        sanitizer_bad = any(marker in combined for marker in (
+            "AddressSanitizer", "LeakSanitizer", "runtime error:",
+            "SEGV", "heap corruption"))
+        if (proc.returncode != 101 or needle not in combined
+                or "unreachable" in proc.stdout or sanitizer_bad):
+            print(f"FAIL {name}: expected clean panic cleanup, got exit "
+                  f"{proc.returncode}")
             print(f"  stdout: {proc.stdout!r}")
             print(f"  stderr: {proc.stderr!r}")
             failed += 1
         else:
-            print(f"ok   {name} (panic aborts)")
+            print(f"ok   {name} (panic cleaned up, exit 101)")
 
     print()
     print(f"{total - failed}/{total} passed")

@@ -2,7 +2,7 @@
 
 RUNTIME = r"""
 /* ------------------------------------------------------------------
- * Atrat runtime -- ~250 lines, no GC, no external dependencies.
+ * Atrat runtime -- ~360 lines, no GC, no external dependencies.
  * ------------------------------------------------------------------ */
 #include <stdint.h>
 #include <stddef.h>
@@ -18,11 +18,77 @@ typedef struct { const char* ptr; size_t len; } AtrStr;
 typedef struct { char* ptr; size_t len; size_t cap; } AtrString;
 typedef struct { char _unused; } AtrUnit;
 
+/* Panic cleanup registry. Generated code registers every live owning local
+ * and function parameter; moves and normal scope exits unregister it. On a
+ * panic the runtime destroys all remaining owners in reverse registration
+ * order before terminating. This is cleanup, not unwinding: control never
+ * returns to Atrat code. */
+typedef void (*AtrCleanupFn)(void*);
+typedef struct {
+    void* ptr;
+    AtrCleanupFn fn;
+} AtrCleanupEntry;
+
+static AtrCleanupEntry* atr_cleanups = NULL;
+static size_t atr_cleanup_len = 0;
+static size_t atr_cleanup_cap = 0;
+static int atr_panicking = 0;
+
+static inline void atr_panic(const char* msg);
+
+static inline void atr_cleanup_register(void* ptr, AtrCleanupFn fn) {
+    if (atr_cleanup_len == atr_cleanup_cap) {
+        size_t ncap = atr_cleanup_cap ? atr_cleanup_cap * 2 : 16;
+        AtrCleanupEntry* grown = (AtrCleanupEntry*)realloc(
+            atr_cleanups, ncap * sizeof(AtrCleanupEntry));
+        if (!grown) {
+            atr_panic("out of memory while registering cleanup");
+        }
+        atr_cleanups = grown;
+        atr_cleanup_cap = ncap;
+    }
+    atr_cleanups[atr_cleanup_len].ptr = ptr;
+    atr_cleanups[atr_cleanup_len].fn = fn;
+    atr_cleanup_len++;
+}
+
+static inline void atr_cleanup_unregister(void* ptr) {
+    for (size_t i = atr_cleanup_len; i > 0; i--) {
+        if (atr_cleanups[i - 1].ptr == ptr) {
+            atr_cleanups[i - 1] = atr_cleanups[atr_cleanup_len - 1];
+            atr_cleanup_len--;
+            return;
+        }
+    }
+}
+
+static inline void atr_cleanup_dispose(void) {
+    free(atr_cleanups);
+    atr_cleanups = NULL;
+    atr_cleanup_len = 0;
+    atr_cleanup_cap = 0;
+}
+
+static inline void atr_cleanup_run(void) {
+    while (atr_cleanup_len > 0) {
+        AtrCleanupEntry e = atr_cleanups[--atr_cleanup_len];
+        e.fn(e.ptr);
+    }
+    atr_cleanup_dispose();
+}
+
 static inline void atr_panic_str(AtrStr msg) {
+    if (atr_panicking) {
+        fputs("atrat panic: panic while cleaning up\n", stderr);
+        exit(101);
+    }
+    atr_panicking = 1;
     fputs("atrat panic: ", stderr);
     if (msg.ptr) fwrite(msg.ptr, 1, msg.len, stderr);
     fputc('\n', stderr);
-    abort();
+    atr_cleanup_run();
+    fflush(NULL);
+    exit(101);
 }
 
 static inline void atr_panic(const char* msg) {

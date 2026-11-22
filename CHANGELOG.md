@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.7 — panic cleanup
+
+- Added a runtime panic cleanup registry for live owning locals and function
+  parameters. Moves and normal scope exits unregister entries; a panic destroys
+  the remaining owners in reverse registration order, then exits with status
+  **101** instead of calling `abort`.
+- Cleanup now crosses nested calls. Caller arguments are unregistered before a
+  call and callee parameters are registered on entry, so a panic inside a callee
+  destroys its parameters and locals exactly once.
+- Materialised statement temporaries (field access, `len`, enum receivers) are
+  registered and cancelled or dropped with their normal statement-end lifetime.
+- Explicit `drop(local)` and consuming operations (`unwrap`, `?`, moves into
+  calls/returns/closures) unregister before ownership leaves the binding.
+- Normal `main` return disposes the registry array.
+- Added panic-cleanup tests for String/Box/Rc/List/struct locals, nested calls,
+  match bindings moved into a call, loop locals, and `Result::unwrap` on `Err`;
+  the panic test loop now rejects ASan/LSan/UBSan diagnostics and expects exit
+  101.
+- **116/116 tests** (56 run, 51 compile-fail, 8 panic-path, 1 multi-file).
+- Honest limitation: this is cleanup, not unwinding. Panics cannot be caught;
+  expression temporaries that never become locals can still leak; a panic in a
+  destructor exits without remaining cleanup.
+
 ## 0.8.6 — temporary ownership stabilization
 
 - Reject field/method/deref access on temporary `Box`/`Rc` receivers. The old
