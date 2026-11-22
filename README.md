@@ -11,8 +11,16 @@
 > rewrite. See [Honest boundaries](#honest-boundaries) and
 > [docs/READINESS.md](docs/READINESS.md).
 
+<p align="center">
+  <a href="https://github.com/jawadCircuit/atrat-lang/releases/latest">
+    <img alt="Latest Atrat release" src="https://img.shields.io/github/v/release/jawadCircuit/atrat-lang?include_prereleases&style=for-the-badge&label=release&color=2563eb">
+  </a>
+  <a href="https://github.com/jawadCircuit/atrat-lang/releases">
+    <img alt="Alpha status" src="https://img.shields.io/badge/status-alpha-f59e0b?style=for-the-badge">
+  </a>
+</p>
+
 [![CI](https://github.com/jawadCircuit/atrat-lang/actions/workflows/ci.yml/badge.svg)](https://github.com/jawadCircuit/atrat-lang/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/jawadCircuit/atrat-lang?include_prereleases&label=release)](https://github.com/jawadCircuit/atrat-lang/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
