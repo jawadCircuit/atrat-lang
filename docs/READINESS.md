@@ -21,13 +21,43 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection and enforced cross-file `pub` visibility; flat namespace, no separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 119 cases incl. 51 compile-fail, 8 panic-path and 4 multi-file tests; 500-case mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 132 cases incl. 55 compile-fail, 9 panic-path and 4 multi-file tests; 500-case mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.9 added
+
+- Fixed a silent leak when matching a non-`Copy` value against a literal
+  pattern: an owned `String` scrutinee is now dropped at the end of a literal
+  arm instead of being left behind.
+- Fixed `unwrap_or`/`ok_or` defaults. Defaults are evaluated eagerly into a
+  registered temporary and dropped when the success variant wins; moving a
+  local into the default no longer leaves it unregistered and leaked.
+- Rejected moving a non-`Copy` field out of an aggregate. The old conservative
+  path marked the whole owner moved without dropping its siblings. `let s =
+  p.name` now fails with E0302; clone the field or move the whole value.
+- Changed `drop(p.field)` to destroy the field in place instead of marking the
+  whole owner moved, so the owner and its other fields remain usable.
+- Rejected `drop(r.field)` through `Rc` or a shared reference, which would
+  otherwise destroy a field visible through another owner.
+- Materialise non-`Copy` aggregate operands of `==`/`!=` before comparing them,
+  so a struct/enum literal's owned fields are dropped afterwards instead of
+  leaking.
+- Drop inspected non-`Copy` fields when a variant pattern combines a literal
+  subpattern with a binding in another field, instead of leaving those
+  fields behind.
+- Track a non-`Copy` match scrutinee as a cleanup owner. A literal arm, an
+  early `?` return, `break`/`continue` or a panic now drops it exactly once;
+  moved source locals are marked dead before the arms so an early return cannot
+  double-drop them.
+- Added regressions for eager defaults, literal-pattern matching, field drops,
+  rejected field moves and rejected destructive drops through shared owners.
+- **132/132 tests** (64 run, 55 compile-fail, 9 panic-path, 4 multi-file).
+- Remaining limitation: no per-field partial-move drop flags yet.
 
 ## What 0.8.8 added
 
@@ -234,7 +264,7 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | Cross-file `pub` visibility is enforced and public interfaces cannot expose private types. Still no namespacing, per-field visibility, separate compilation or package boundaries. | 2–4 weeks |
-| C4 | No formal soundness evidence | The checker is hand-written; 119 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No formal soundness evidence | The checker is hand-written; 132 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 | C6 | Panic is not unwinding or catchable | Live owning locals and parameters are now destroyed before the process exits with status 101, including across nested calls. There is no catch/recover, expression temporaries that never become locals can leak, and a panic inside a destructor stops remaining cleanup. | 3–6 weeks for a full panic strategy, more for cross-platform/ABI guarantees |
 
@@ -308,7 +338,7 @@ At part-time effort (roughly 10–15 hours/week), multiply the calendar ranges b
 The largest uncertainty is not the parser or code generator. It is the work that
 turns a compiler into a platform: lifetime/escape semantics, a real standard
 library, module/package boundaries, full panic semantics, tooling, security response,
-and enough external use to find the bugs the current 119 tests cannot.
+and enough external use to find the bugs the current 132 tests cannot.
 
 ## Recommended path
 

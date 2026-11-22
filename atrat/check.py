@@ -2820,7 +2820,11 @@ class BorrowChecker:
                         self.err(f"cannot move a non-Copy field out of `{root}` "
                                  f"because it is borrowed", e,
                                  "clone it or borrow the field instead")
-                    self.move_var(bv, e, root)
+                    # Moving one field out of an aggregate would leave the
+                    # other owned fields without a drop owner. Until partial
+                    # moves have per-field drop flags, reject rather than leak.
+                    self.err(f"cannot move a non-Copy field out of `{root}`", e,
+                             "clone the field or move the whole value")
             return
         if isinstance(e, ast.Index):
             roots = self.place_roots(e, e)
@@ -2971,7 +2975,33 @@ class BorrowChecker:
         if kind == "builtin":
             name = solved[1]
             for a in e.args:
-                self.use(a, consume=(name == "drop"))
+                # `drop(x.field)` destroys that field in place; it does not
+                # move the whole owner. Other builtins keep their normal
+                # move semantics.
+                if name == "drop" and isinstance(a, (ast.Field, ast.Index)):
+                    self.use(a, consume=False)
+                    node = a.base
+                    while True:
+                        owner = self.m.u.resolve_deep(
+                            getattr(node, "ty", None) or UNIT)
+                        if isinstance(node, ast.Deref):
+                            owner = self.m.u.resolve_deep(
+                                getattr(node.base, "ty", None) or UNIT)
+                        if isinstance(owner, TCon) and owner.name == "Rc":
+                            self.err("cannot drop a field through `Rc`", a,
+                                     "Rc payloads are shared; clone the value "
+                                     "and drop the clone instead")
+                        if isinstance(owner, TRef) and not owner.mut:
+                            self.err("cannot drop a field through a shared "
+                                     "reference", a,
+                                     "borrow the owner mutably or drop an "
+                                     "owned copy")
+                        if isinstance(node, (ast.Field, ast.Index, ast.Deref)):
+                            node = node.base
+                            continue
+                        break
+                else:
+                    self.use(a, consume=(name == "drop"))
             return
         if kind == "dyn_method":
             recv = e.callee.base

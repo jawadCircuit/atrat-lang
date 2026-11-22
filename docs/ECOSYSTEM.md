@@ -10,7 +10,7 @@ compatibility debt.
 
 Today Atrat has:
 
-- a flat recursive module include, with no visibility or separate compilation;
+- a flat recursive module include; `pub` is cross-file only, with no namespacing or separate compilation;
 - no stable language/spec version or deprecation policy;
 - a minimal standard library and no package boundary;
 - one compiler implementation and no binary/ABI contract.

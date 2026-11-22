@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.9 — destruction edge cases
+
+- Drop a non-`Copy` match scrutinee after a literal-pattern arm instead of
+  leaking it; unit-result matches are covered too.
+- Evaluate `unwrap_or`/`ok_or` defaults eagerly into a registered temporary and
+  drop the unused default when the success variant wins. This fixes a leak when
+  a local was moved into a default that the runtime branch never used.
+- Reject moving a non-`Copy` field out of an aggregate with `E0302`, preventing
+  a silent leak of the owner's remaining fields. Clone the field or move the
+  whole value.
+- `drop(value.field)` now destroys the field in place without marking the whole
+  owner moved; the owner remains usable.
+- Materialise non-`Copy` aggregate operands of `==`/`!=` and drop them after the
+  comparison; comparing struct/enum literals no longer leaks their owned fields.
+- Drop fields inspected by literal subpatterns when another field of the same
+  variant is bound; the variant is not dropped as a whole, so those inspected
+  fields previously leaked.
+- Track the non-`Copy` match scrutinee as a cleanup owner, fixing leaks on an
+  early `?` return, `break`/`continue`, a failed exhaustive match or a panic in
+  a literal arm. Mark a moved source local dead before the arms so early return
+  cannot double-drop it.
+- Add run/fail regressions for the behaviours above.
+- **132/132 tests** (64 run, 55 compile-fail, 9 panic-path, 4 multi-file).
+
 ## 0.8.8 — cross-file visibility
 
 - Attach the originating file to every AST node while loading a program.

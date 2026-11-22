@@ -220,6 +220,77 @@ with `E0402`, and public interfaces cannot expose private types.
 
 Tests: `private-function`, `private-struct`, `exposed-private-type`.
 
+## 12. Destruction leaks at ownership edges (fixed 0.8.9)
+
+Several destruction leaks shared one cause: an owning temporary lost its drop
+owner, or a value was moved without transferring its cleanup ownership.
+
+```atrat
+let s = "hello".clone()
+let n = match s:
+    "hello" -> 1
+    _ -> 2
+```
+
+A literal pattern does not consume the scrutinee, so the arm-end drop was
+missing and `s` leaked. Matching now drops a non-`Copy` scrutinee after a
+literal arm, including unit-result matches.
+
+```atrat
+let d = rc(9)
+let x = o.unwrap_or(d)
+```
+
+The default was emitted only in the `None`/`Err` branch. The checker still
+marked `d` moved, so when the success branch won the `Rc` was neither used nor
+dropped. Defaults are now evaluated eagerly into a registered temporary and
+dropped when unused.
+
+```atrat
+let s = p.name
+```
+
+Moving a non-`Copy` field marked the whole `p` moved, so `p`'s remaining owned
+fields were never dropped. The checker now rejects the move with `E0302`;
+clone the field or move the whole value. `drop(p.name)` destroys just that field
+in place and leaves the owner usable.
+
+A field drop also must not run through a shared owner: `drop(r.name)` where `r`
+is an `Rc` or `&` alias would free a field another owner can still reach. Both
+are rejected with `E0302`.
+
+```atrat
+let same = P { r: a } == P { r: b }
+```
+
+Struct equality compared the addresses of two compound literals. Nothing owned
+those literals, so their `Rc`/`String` fields leaked. Non-`Copy` aggregate
+operands are now materialised once and dropped after the comparison.
+
+```atrat
+match e:
+    E.A(x, "y") -> len(x)
+```
+
+`x` is bound (and dropped through its binding), so the variant is not dropped
+as a whole. The literal `"y"` subpattern only inspects its field, which
+therefore had no drop owner. Inspected non-`Copy` fields now get their own drop
+when a sibling field is bound.
+
+An all-literal variant arm still drops the scrutinee as a whole, so the
+per-field path is only used when another field is bound. The match scrutinee is
+now itself a cleanup owner: a literal arm that panics, returns early with `?`,
+breaks, or falls off the end without an arm drops it exactly once. If the
+scrutinee is a local, its alive flag is cleared before the arms so an early
+return cannot drop both the source and the match temporary.
+
+Tests: `eager-default-drop`, `match-all-literal-fields`,
+`match-partial-literal-field`, `match-string-literal`, `match-try-early-return`,
+`panic-match-literal`,
+`match-string-literal-unit`, `move-field-rejected`, `drop-field-in-place`,
+`drop-rc-field-rejected`, `drop-shared-field-rejected`,
+`drop-deref-shared-field-rejected`, `eq-temp-struct-drop`.
+
 ## Running them
 
 ```bash

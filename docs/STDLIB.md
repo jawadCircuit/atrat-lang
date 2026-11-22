@@ -195,6 +195,11 @@ no `Rc::get_mut` yet. `Arc`, threads and `Mutex` do not exist yet.
 - Branch and loop cleanup uses per-binding drop flags, so a value is destroyed
   exactly once even when only one branch initializes it.
 - `drop(value)` performs destruction immediately and marks the binding moved.
+- `drop(value.field)` destroys that field in place; the owner remains usable and
+  its destructor is idempotent for the dropped field.
+- Moving a non-`Copy` field out of an aggregate is rejected for now; clone the
+  field or move the whole value. This avoids leaking sibling fields while
+  partial moves lack per-field drop flags.
 - A partially initialized local cannot be read or have its fields assigned.
   Use a complete struct literal or assign the whole value.
 - `Box`/`Rc` payload destructors run recursively, including nested `Option`,
@@ -220,6 +225,6 @@ no `Rc::get_mut` yet. `Arc`, threads and `Mutex` do not exist yet.
 - Associated types and generic traits beyond the current method signatures
 - Nested or returning closures
 - `Arc`, threads, `Mutex`, interior mutability
-- Module visibility enforcement and separate compilation
+- Module namespacing and separate compilation (`pub` is cross-file only)
 - A formatter, LSP, debugger or package registry
 - A stable standard-library API

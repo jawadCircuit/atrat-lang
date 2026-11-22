@@ -1701,13 +1701,26 @@ static inline void atr_list_{key}_free({cname}* self) {{
                     lambda a, b: f"atr_str_eq({a}, {b})", "bool")
                 return eq if op == "==" else f"(!{eq})"
             eqf = self.ensure_eq(lt)
-            a = self.emit_expr(e.left, consume=False)
-            b = self.emit_expr(e.right, consume=False)
             if eqf:
-                pa = self.addr_if_place(e.left) or f"(&({a}))"
-                pb = self.addr_if_place(e.right) or f"(&({b}))"
+                def operand_addr(e, prefix):
+                    pa = self.addr_if_place(e)
+                    if pa is not None:
+                        return pa
+                    t = self.concrete(e.ty)
+                    if not self.is_copy(t):
+                        # Aggregate temporaries own resources. Materialise once
+                        # and let statement-end cleanup drop them after the
+                        # comparison; a bare compound literal would leak.
+                        _, tmp = self.materialize(e, prefix)
+                        return f"(&{tmp})"
+                    return f"(&({self.emit_expr(e, consume=False)}))"
+
+                pa = operand_addr(e.left, "eqa")
+                pb = operand_addr(e.right, "eqb")
                 eq = f"{eqf}({pa}, {pb})"
                 return eq if op == "==" else f"(!{eq})"
+            a = self.emit_expr(e.left, consume=False)
+            b = self.emit_expr(e.right, consume=False)
             return f"(({a}) {op} ({b}))"
 
         if op in ("<", "<=", ">", ">=") and _stringy(lt):
@@ -1989,6 +2002,25 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 p for p in self.pending if f"{d}(&{tmp})" not in p]
         return f"(&{tmp})"
 
+    def eager_temp(self, e, prefix="dflt"):
+        """Evaluate an expression eagerly into a registered temporary.
+
+        Used for `unwrap_or`/`ok_or` defaults: the default is evaluated even
+        when the receiver is the success variant, so an unused owned default
+        must still be dropped. Returns (type, cvar, cleanup_unregister, drop_fn)
+        where the last two are empty for `Copy` values.
+        """
+        t = self.concrete(e.ty)
+        c = self.ctype(t)
+        tmp = self.temp(prefix)
+        val = self.emit_expr(e, consume=True)
+        self.pre.append(f"{c} {tmp} = {val};")
+        fn = self.ensure_cleanup(t) if not self.is_copy(t) else ""
+        d = self.ensure_drop(t) if not self.is_copy(t) else ""
+        if fn:
+            self.pre.append(f"atr_cleanup_register(&{tmp}, {fn});")
+        return t, tmp, (self.cleanup_unregister(tmp) if fn else ""), d
+
     def _drop_enum_variant(self, et: TCon, variant: str) -> str:
         info = self.m.enums.get(et.name)
         if info is None:
@@ -2045,41 +2077,33 @@ static inline void atr_list_{key}_free({cname}* self) {{
                     f'atr_panic("{msg}"); }} _p->u.V_{bad_name}.v0; }})')
         if method == "unwrap_or":
             tmp = self.temp("en")
-            base_pre = list(self.pre)
-            base_pending = list(self.pending)
-            self.pre = []
-            self.pending = []
-            dflt = self.emit_expr(e.args[0], consume=True)
-            dpre = list(self.pre)
-            dpend = list(self.pending)
-            self.pre = base_pre
-            self.pending = base_pending
+            dt, dflt, dunreg, ddrop = self.eager_temp(e.args[0], "dflt")
             drop_bad = self._drop_enum_variant(et, bad_name)
             bad = (drop_bad + " ") if drop_bad else ""
-            return (f"({{ {' '.join(base_pre)} {c}* _p = {addr}; "
+            if dunreg:
+                some_tail = f"{tmp} = _p->u.V_{ok_name}.v0; {dunreg} {ddrop}(&{dflt});"
+                else_assign = f"{dunreg} {tmp} = {dflt}; {bad}"
+            else:
+                some_tail = f"{tmp} = _p->u.V_{ok_name}.v0;"
+                else_assign = f"{tmp} = {dflt}; {bad}"
+            return (f"({{ {c}* _p = {addr}; "
                     f"{self.ctype(self.concrete(e.ty))} {tmp}; "
-                    f"if (_p->tag == {ok_i}) {{ {tmp} = _p->u.V_{ok_name}.v0; }} "
-                    f"else {{ {' '.join(dpre)} {tmp} = {dflt}; "
-                    f"{' '.join(dpend)} {bad}}} {tmp}; }})")
+                    f"if (_p->tag == {ok_i}) {{ {some_tail} }} "
+                    f"else {{ {else_assign} }} {tmp}; }})")
         if method == "ok_or":
             tmp = self.temp("en")
-            base_pre = list(self.pre)
-            base_pending = list(self.pending)
-            self.pre = []
-            self.pending = []
-            errv = self.emit_expr(e.args[0], consume=True)
-            dpre = list(self.pre)
-            dpend = list(self.pending)
-            self.pre = base_pre
-            self.pending = base_pending
+            et_err, errv, eunreg, edrop = self.eager_temp(e.args[0], "errv")
             rc = self.ctype(self.concrete(e.ty))
             mk_ok = self.mk_ctor(self.concrete(e.ty), "Ok",
                                  [f"_p->u.V_{ok_name}.v0"])
             mk_err = self.mk_ctor(self.concrete(e.ty), "Err", [errv])
-            return (f"({{ {' '.join(base_pre)} {c}* _p = {addr}; {rc} {tmp}; "
-                    f"if (_p->tag == {ok_i}) {{ {tmp} = {mk_ok}; }} "
-                    f"else {{ {' '.join(dpre)} {tmp} = {mk_err}; "
-                    f"{' '.join(dpend)} }} {tmp}; }})")
+            if eunreg:
+                ok_tail = f"{tmp} = {mk_ok}; {eunreg} {edrop}(&{errv});"
+            else:
+                ok_tail = f"{tmp} = {mk_ok};"
+            return (f"({{ {c}* _p = {addr}; {rc} {tmp}; "
+                    f"if (_p->tag == {ok_i}) {{ {ok_tail} }} "
+                    f"else {{ {eunreg} {tmp} = {mk_err}; }} {tmp}; }})")
         if method in ("ok", "err"):
             src_variant = ok_name if method == "ok" else bad_name
             src_i = ok_i if method == "ok" else bad_i
@@ -2312,6 +2336,31 @@ static inline void atr_list_{key}_free({cname}* self) {{
     # ------------------------------------------------------------------
     # match
     # ------------------------------------------------------------------
+    def pattern_consumes_scrutinee(self, pat, ty, owns=True) -> bool:
+        """Whether an arm's pattern takes ownership of the whole scrutinee.
+
+        A literal pattern only inspects the value, so a non-Copy scrutinee still
+        needs an arm-end drop. Binding/wildcard patterns own the value and drop
+        it through their binding cleanup instead.
+        """
+        ty = self.concrete(ty)
+        if not owns or self.is_copy(ty):
+            return True
+        if isinstance(pat, ast.PatLit):
+            return False
+        if isinstance(pat, (ast.PatBind, ast.PatWild)):
+            return True
+        if isinstance(pat, ast.PatVariant):
+            info = self.m.enums[pat.ref.enum]
+            _, vtys = info.variants[pat.ref.index]
+            mp = dict(zip(info.generics, ty.args))
+            for sub, vt in zip(pat.args, vtys):
+                pt = self.concrete(subst(vt, mp))
+                if self.pattern_consumes_scrutinee(sub, pt, owns=True):
+                    return True
+            return False
+        return True
+
     def emit_match(self, e) -> str:
         st = self.concrete(e.scrutinee.ty)
         by_ref = getattr(e, "match_by_ref", False)
@@ -2324,6 +2373,13 @@ static inline void atr_list_{key}_free({cname}* self) {{
         else:
             src = self.emit_expr(e.scrutinee, consume=True)
             head = [f"{self.ctype(st)} {tmp} = {src};"]
+            # If the scrutinee is a local, it has been moved into `tmp` now.
+            # Clear its alive flag before any arm can return early; otherwise
+            # an arm-level `?` would drop both the source local and `tmp`.
+            if isinstance(e.scrutinee, ast.Name):
+                local = self.lookup_local(e.scrutinee.name)
+                if local is not None and not self.is_copy(st):
+                    head.append(f"{self.alive_flag(local[0])} = false;")
             access = tmp
             match_t = st
 
@@ -2335,6 +2391,11 @@ static inline void atr_list_{key}_free({cname}* self) {{
             result_var = self.temp("r")
             head.append(f"{result_c} {result_var};")
 
+        own_scrutinee = not by_ref and not self.is_copy(match_t)
+        if own_scrutinee:
+            head.append(f"bool {self.alive_flag(tmp)} = true;")
+            head.append(self.cleanup_register(tmp, match_t))
+
         post_moves = list(self.pending)
         self.pending = []
         body = []
@@ -2345,10 +2406,21 @@ static inline void atr_list_{key}_free({cname}* self) {{
         for i, arm in enumerate(e.arms):
             self.var_scopes.append({})
             self.drop_scopes.append([])
+            if own_scrutinee:
+                self.drop_scopes[-1].append((tmp, match_t))
             conds = []
             decls = []
             self.emit_pattern(arm.pattern, access, match_t, conds, decls, not by_ref)
             cond = " && ".join(conds) if conds else "1"
+            consumes = (not by_ref and
+                        self.pattern_consumes_scrutinee(
+                            arm.pattern, match_t, owns=True))
+            if own_scrutinee and consumes:
+                # Ownership leaves the match temporary as the pattern binds or
+                # drops its fields. Do this before declarations so an early
+                # return or panic cannot double-own the scrutinee.
+                decls.insert(0, f"{self.cleanup_unregister(tmp)} "
+                                f"{self.alive_flag(tmp)} = false;")
             is_catchall = cond == "1"
             if i == 0:
                 body.append("if (" + cond + ") {")
@@ -2428,6 +2500,8 @@ static inline void atr_list_{key}_free({cname}* self) {{
             _, vtys = info.variants[pat.ref.index]
             mp = dict(zip(info.generics, ty.args))
             conds.append(f"({vex}).tag == {pat.ref.index}")
+            variant_consumes = self.pattern_consumes_scrutinee(pat, ty, True)
+            literal_fields = []
             for i, (sub, vt) in enumerate(zip(pat.args, vtys)):
                 pt = self.concrete(subst(vt, mp))
                 pex = f"({vex}).u.V_{pat.variant}.v{i}"
@@ -2437,6 +2511,16 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 # temporary inside `decls` would make the `if` condition refer
                 # to an undeclared variable.
                 self.emit_pattern(sub, pex, pt, conds, decls, want_owns)
+                if (owns and variant_consumes and want_owns
+                        and not self.pattern_consumes_scrutinee(sub, pt, True)):
+                    literal_fields.append((pt, pex))
+            # A literal subpattern only inspects its field. If another field in
+            # this variant was bound, the whole variant is not dropped, so the
+            # inspected non-Copy field still needs its own drop.
+            for pt, pex in literal_fields:
+                d = self.ensure_drop(pt)
+                if d:
+                    decls.append(f"{d}(&({pex}));")
             return
         raise CodegenError("internal: unknown pattern")
 

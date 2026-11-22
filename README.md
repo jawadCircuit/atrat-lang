@@ -95,7 +95,7 @@ point, and the generated C is available with `atrc emit-c`.
 | Modules / packaging / tooling | **Partial**: cross-file `pub` visibility enforced; no namespacing or separate compilation |
 | Production readiness | **No** |
 
-There are **119 end-to-end tests** covering successful programs, exact stdout,
+There are **132 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -176,6 +176,10 @@ production compiler**. The important current gaps:
   closure, non-Copy captures are read-only shared references; they cannot be
   moved out or mutated. Nested capturing closures and returning closures are
   not supported yet.
+- A non-`Copy` field cannot be moved out of an aggregate on its own; clone the
+  field or move the whole value. `drop(value.field)` destroys that field in
+  place. This avoids leaking the aggregate's remaining owned fields while
+  partial-move flags are not implemented.
 - `Box<T>` and read-only `Rc<T>` exist; `Arc`, interior mutability and `Mutex` do not.
 - Panics clean up live owning locals and function parameters, then terminate with
   status 101. They do not unwind, cannot be caught, and expression temporaries
@@ -227,7 +231,7 @@ python tests/run_tests.py
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **119/119** pass, including trait objects, supertraits, owned
+Currently **132/132** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised

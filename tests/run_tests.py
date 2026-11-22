@@ -578,6 +578,143 @@ fn main() -> i32:
         "hi p" + chr(10) + "hi p" + chr(10) + "hi int" + chr(10) + "1" + chr(10) + "2" + chr(10),
     ),
     (
+        "eq-temp-struct-drop",
+        """
+struct P:
+    r: Rc<i64>
+
+fn main() -> i32:
+    let r = rc(5)
+    let a = r.clone()
+    let b = r.clone()
+    let same = P { r: a } == P { r: b }
+    print(same)
+    print(r.strong_count())
+    return 0
+""",
+        "true" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "eager-default-drop",
+        """
+fn main() -> i32:
+    let r = rc(5)
+    let o: Option<Rc<i64>> = Some(r.clone())
+    let d = rc(9)
+    let dc = d.clone()
+    let x = o.unwrap_or(d)
+    print(r.strong_count())
+    print(dc.strong_count())
+    print(*x)
+    drop(x)
+    print(r.strong_count())
+    drop(dc)
+
+    let p: Option<i64> = Some(1)
+    let e = rc(7)
+    let ec = e.clone()
+    let res = p.ok_or(e)
+    print(res.is_ok())
+    print(ec.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "1" + chr(10) + "5" + chr(10) + "1" + chr(10)
+        + "true" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "drop-field-in-place",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    drop(p.a)
+    print(p.b)
+    return 0
+""",
+        "b" + chr(10),
+    ),
+    (
+        "match-try-early-return",
+        """
+fn f() -> Option<i64>:
+    let s = "hello".clone()
+    let n = match s:
+        "hello" -> Some(1)?
+        _ -> 2
+    return Some(n)
+
+fn main() -> i32:
+    print(f().unwrap())
+    return 0
+""",
+        "1" + chr(10),
+    ),
+    (
+        "match-all-literal-fields",
+        """
+enum E:
+    A(String, String)
+    B
+
+fn main() -> i32:
+    let e = E.A("x".clone(), "y".clone())
+    let n = match e:
+        E.A("x", "y") -> 1
+        E.A(_, _) -> 2
+        E.B -> 3
+    print(n)
+    return 0
+""",
+        "1" + chr(10),
+    ),
+    (
+        "match-partial-literal-field",
+        """
+enum E:
+    A(String, String)
+    B
+
+fn main() -> i32:
+    let e = E.A("x".clone(), "y".clone())
+    let n = match e:
+        E.A(x, "y") -> len(x)
+        E.A(_, _) -> 0
+        E.B -> 3
+    print(n)
+    return 0
+""",
+        "1" + chr(10),
+    ),
+    (
+        "match-string-literal",
+        """
+fn main() -> i32:
+    let s = "hello".clone()
+    let n = match s:
+        "hello" -> 1
+        _ -> 2
+    print(n)
+    return 0
+""",
+        "1" + chr(10),
+    ),
+    (
+        "match-string-literal-unit",
+        """
+fn main() -> i32:
+    let s = "hello".clone()
+    match s:
+        "hello" -> print("hit")
+        _ -> print("miss")
+    print("done")
+    return 0
+""",
+        "hit" + chr(10) + "done" + chr(10),
+    ),
+    (
         "recursive-drop",
         """
 struct Node:
@@ -1210,6 +1347,66 @@ FAIL_CASES = [
         'struct P:\n    x: i64\n\nfn main() -> i32:\n    print((*box(P { x: 5 })).x)\n    return 0\n',
         "type error",
         "temporary `Box<P>` used for dereference",
+    ),
+    (
+        "drop-rc-field-rejected",
+        """
+struct P:
+    s: String
+
+fn main() -> i32:
+    let p = rc(P { s: "hello".clone() })
+    drop(p.s)
+    return 0
+""",
+        "borrow error",
+        "cannot drop a field through `Rc`",
+    ),
+    (
+        "drop-deref-shared-field-rejected",
+        """
+struct P:
+    s: String
+
+fn main() -> i32:
+    let p = P { s: "hello".clone() }
+    let r = &p
+    drop((*r).s)
+    return 0
+""",
+        "borrow error",
+        "cannot drop a field through a shared reference",
+    ),
+    (
+        "drop-shared-field-rejected",
+        """
+struct P:
+    s: String
+
+fn main() -> i32:
+    let p = P { s: "hello".clone() }
+    let r = &p
+    drop(r.s)
+    return 0
+""",
+        "borrow error",
+        "cannot drop a field through a shared reference",
+    ),
+    (
+        "move-field-rejected",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    let s = p.a
+    print(s)
+    return 0
+""",
+        "borrow error",
+        "cannot move a non-Copy field out of `p`",
     ),
     (
         "use-after-move",
@@ -2053,6 +2250,19 @@ fn main() -> i32:
     return 0
 """,
         "loop boom",
+    ),
+    (
+        "panic-match-literal",
+        """
+fn main() -> i32:
+    let s = "payload".clone()
+    match s:
+        "payload" -> panic("literal match boom")
+        _ -> print("no")
+    print("unreachable")
+    return 0
+""",
+        "literal match boom",
     ),
     (
         "panic-result-err",
