@@ -2559,6 +2559,7 @@ class BVar:
     line: int
     moved: bool = False
     uninit: bool = False
+    moved_paths: set = field(default_factory=set)
     borrow_src: set | None = None
     borrow_mut: bool = False
     ref_borrow: object = None
@@ -2626,14 +2627,15 @@ class BorrowChecker:
         self.check_block(info.decl.body, new_scope=False)
 
     def snapshot(self):
-        return {id(bv): (bv.moved, bv.uninit, bv.name)
+        return {id(bv): (bv.moved, bv.uninit, frozenset(bv.moved_paths), bv.name)
                 for sc in self.scopes for bv in sc.values()}
 
     def restore(self, snap):
         for sc in self.scopes:
             for bv in sc.values():
                 if id(bv) in snap:
-                    bv.moved, bv.uninit, _ = snap[id(bv)]
+                    bv.moved, bv.uninit, paths, _ = snap[id(bv)]
+                    bv.moved_paths = set(paths)
 
     def merge(self, states):
         for sc in self.scopes:
@@ -2642,6 +2644,10 @@ class BorrowChecker:
                 if entries:
                     bv.moved = any(e[0] for e in entries)
                     bv.uninit = any(e[1] for e in entries)
+                    paths = set()
+                    for e in entries:
+                        paths.update(e[2])
+                    bv.moved_paths = paths
 
     def check_block(self, stmts, new_scope=True):
         if new_scope:
@@ -2710,12 +2716,94 @@ class BorrowChecker:
             self.err(f"`{bv.name}` is moved before it is initialized", node)
         if bv.moved:
             self.err(f"use of moved value `{root_name or bv.name}`", node)
+        if bv.moved_paths:
+            what = self.field_label(bv.name, next(iter(bv.moved_paths)))
+            self.err(f"cannot move `{root_name or bv.name}` because "
+                     f"`{what}` was moved out of it", node,
+                     "move the remaining fields individually or reassign "
+                     "the whole value")
         act = self.active_on(bv.name)
         if act:
             self.err(f"cannot move `{bv.name}` while it is borrowed", node,
                      "wait until the borrow ends, or clone the value",
                      notes=[(act[0].line, f"borrow of `{bv.name}` starts here")])
         bv.moved = True
+
+    # -- partial moves ----------------------------------------------------
+    def place_path(self, e):
+        """Return (root_name, field-path) for a plain aggregate place.
+
+        Only Name/Field chains are tracked. Deref/Index and Rc payloads are
+        deliberately excluded; a direct field chain through an owned Box is
+        tracked because the Box remains the drop owner.
+        """
+        if isinstance(e, ast.Name):
+            return (e.name, ())
+        if isinstance(e, ast.Field):
+            base = self.place_path(e.base)
+            if base is None:
+                return None
+            return (base[0], base[1] + (e.field,))
+        return None
+
+    def field_label(self, root, path):
+        return ".".join((root,) + tuple(path)) if path else root
+
+    def path_related(self, a, b):
+        """True if one field path is a prefix of the other."""
+        return a[:len(b)] == b or b[:len(a)] == a
+
+    def path_moved(self, bv, path):
+        if bv.moved:
+            return True
+        return any(self.path_related(p, path) for p in bv.moved_paths)
+
+    def check_partial_read(self, e):
+        path = self.place_path(e)
+        if path is None:
+            return
+        bv = self.lookup(path[0])
+        if bv is None:
+            return
+        if path[1] and self.path_moved(bv, path[1]):
+            self.err(f"use of moved field `{self.field_label(*path)}`", e,
+                     "the field was moved earlier; clone it or reassign it")
+        if not path[1] and bv.moved_paths:
+            what = self.field_label(path[0], next(iter(bv.moved_paths)))
+            self.err(f"use of partially moved value `{path[0]}`", e,
+                     f"`{what}` was moved out; use the remaining fields or "
+                     "reassign the whole value")
+
+    def move_path(self, bv, path, node, root):
+        if bv.uninit:
+            self.err(f"`{bv.name}` is moved before it is initialized", node)
+        if bv.moved:
+            self.err(f"cannot move a field of moved value `{root}`", node)
+        if self.path_moved(bv, path):
+            self.err(f"use of moved field `{self.field_label(root, path)}`",
+                     node, "the field was moved earlier; clone it or reassign it")
+        act = self.active_on(bv.name)
+        if act:
+            self.err(f"cannot move a field of `{root}` while it is borrowed",
+                     node, "wait until the borrow ends, or clone the field",
+                     notes=[(act[0].line, f"borrow of `{root}` starts here")])
+        bv.moved_paths.add(path)
+
+    def field_move_blocked(self, e):
+        """Why a field move has no movable owner to zero/drop, if any."""
+        node = e.base
+        while isinstance(node, ast.Field):
+            node = node.base
+        if isinstance(node, ast.Index):
+            return "an indexed element"
+        if isinstance(node, ast.Deref):
+            return "a borrowed or boxed value"
+        bt = self.m.u.resolve_deep(getattr(node, "ty", None) or UNIT)
+        if isinstance(bt, TCon) and bt.name == "Rc":
+            return "an `Rc` payload"
+        if isinstance(bt, (TRef, TPtr)):
+            return "a borrowed value"
+        return ""
 
     # -- places -----------------------------------------------------------
     def place_roots(self, e, node, read=True):
@@ -2759,6 +2847,10 @@ class BorrowChecker:
                 self.err(f"cannot move a non-Copy value out of a {bt.name}", e,
                          "borrow it, clone the payload, or consume the "
                          f"{bt.name} explicitly")
+        if isinstance(e, ast.Field):
+            roots = self.place_roots(e, node)
+            self.use(e, consume=True)
+            return roots
         roots = self.place_roots(e, node)
         if not self.m.is_copy(e.ty):
             for root in roots:
@@ -2799,6 +2891,11 @@ class BorrowChecker:
             if bv.moved:
                 self.err(f"use of moved value `{e.name}`", e,
                          "the value was moved earlier; clone it or borrow instead")
+            if bv.moved_paths:
+                what = self.field_label(e.name, next(iter(bv.moved_paths)))
+                self.err(f"use of partially moved value `{e.name}`", e,
+                         f"`{what}` was moved out; use the remaining fields or "
+                         "reassign the whole value")
             self.check_read_borrows({e.name}, e)
             if consume and not self.m.is_copy(e.ty):
                 self.move_var(bv, e)
@@ -2806,29 +2903,38 @@ class BorrowChecker:
         if isinstance(e, ast.Field):
             roots = self.place_roots(e, e)
             self.check_read_borrows(roots, e)
+            self.check_partial_read(e)
             if consume and not self.m.is_copy(e.ty):
+                path = self.place_path(e)
                 if not roots:
-                    self.err("cannot move a non-Copy field out of a borrowed "
-                             "or temporary value", e,
-                             "clone it, or return an owned copy")
+                    why = self.field_move_blocked(e)
+                    if why:
+                        self.err(f"cannot move a field out of {why}", e,
+                                 "bind an owned value first or clone the field")
+                    return
+                if path is None:
+                    self.err("cannot partially move a non-Copy field out of a "
+                             "borrowed or indexed value", e,
+                             "bind an owned aggregate first or clone the field")
                 for root in roots:
                     bv = self.lookup(root)
                     if bv is None:
                         continue
                     rt = self.m.u.resolve_deep(bv.ty)
+                    if isinstance(rt, TCon) and rt.name == "Rc":
+                        self.err("cannot move a non-Copy field out of an "
+                                 "`Rc` payload", e,
+                                 "Rc payloads are shared; clone the field")
                     if isinstance(rt, (TRef, TPtr)):
                         self.err(f"cannot move a non-Copy field out of `{root}` "
                                  f"because it is borrowed", e,
                                  "clone it or borrow the field instead")
-                    # Moving one field out of an aggregate would leave the
-                    # other owned fields without a drop owner. Until partial
-                    # moves have per-field drop flags, reject rather than leak.
-                    self.err(f"cannot move a non-Copy field out of `{root}`", e,
-                             "clone the field or move the whole value")
+                    self.move_path(bv, path[1], e, root)
             return
         if isinstance(e, ast.Index):
             roots = self.place_roots(e, e)
             self.check_read_borrows(roots, e)
+            self.check_partial_read(e.base)
             if consume and not self.m.is_copy(e.ty):
                 for root in self.place_roots(e, e):
                     bv = self.lookup(root)
@@ -2838,6 +2944,7 @@ class BorrowChecker:
         if isinstance(e, ast.Deref):
             roots = self.place_roots(e, e)
             self.check_read_borrows(roots, e, ignore=self.ref_borrow_of(e.base))
+            self.check_partial_read(e.base)
             base_t = self.m.u.resolve_deep(e.base.ty)
             if isinstance(base_t, TCon) and base_t.name in ("Box", "Rc"):
                 if consume and not self.m.is_copy(e.ty):
@@ -2853,6 +2960,7 @@ class BorrowChecker:
                 if isinstance(bt, TCon) and bt.name == "Rc":
                     self.err("cannot take `&mut` through `Rc`", e,
                              "Rc provides shared access only")
+            self.check_partial_read(e.base)
             roots = self.place_roots(e.base, e)
             ignore = self.ref_borrow_of(e.base)
             if e.mut:
@@ -2996,15 +3104,38 @@ class BorrowChecker:
                                      "reference", a,
                                      "borrow the owner mutably or drop an "
                                      "owned copy")
+                        if isinstance(owner, (TRef, TPtr)):
+                            self.err("cannot drop a field through a borrowed "
+                                     "value", a,
+                                     "drop the owned value or an owned copy")
+                        if isinstance(node, ast.Deref):
+                            self.err("cannot drop a field through a "
+                                     "dereference", a,
+                                     "drop a named field on the owner or drop "
+                                     "an owned copy")
                         if isinstance(node, (ast.Field, ast.Index, ast.Deref)):
                             node = node.base
                             continue
                         break
+                    if isinstance(a, ast.Field) and not self.m.is_copy(a.ty):
+                        path = self.place_path(a)
+                        if path is not None and path[1]:
+                            bv = self.lookup(path[0])
+                            if bv is not None:
+                                roots = self.place_roots(a, a, read=False)
+                                for root in roots:
+                                    act = self.active_on(root)
+                                    if act:
+                                        self.err(f"cannot drop a field of "
+                                                 f"`{root}` while it is borrowed", a,
+                                                 "wait until the borrow ends")
+                                bv.moved_paths.add(path[1])
                 else:
                     self.use(a, consume=(name == "drop"))
             return
         if kind == "dyn_method":
             recv = e.callee.base
+            self.check_partial_read(recv)
             sm = "&"
             tri = self.m.traits.get(solved[1])
             if tri is not None:
@@ -3025,11 +3156,13 @@ class BorrowChecker:
                 self.use(a)
             return
         if kind == "rc_method":
+            self.check_partial_read(e.callee.base)
             roots = self.place_roots(e.callee.base, e)
             self.add_borrow(roots, False, e)
             return
         if kind == "trait_method":
             recv = e.callee.base
+            self.check_partial_read(recv)
             sm = getattr(e, "trait_self_mode", "&")
             if sm is None:
                 self.consume_place(recv, e)
@@ -3047,6 +3180,7 @@ class BorrowChecker:
         if kind == "enum_method":
             method = solved[1]
             recv = e.callee.base
+            self.check_partial_read(recv)
             if method in ("is_some", "is_none", "is_ok", "is_err"):
                 roots = self.place_roots(recv, e)
                 self.add_borrow(roots, False, e)
@@ -3056,11 +3190,13 @@ class BorrowChecker:
                 self.use(a)
             return
         if kind == "strmeth":
+            self.check_partial_read(e.callee.base)
             roots = self.place_roots(e.callee.base, e)
             self.add_borrow(roots, False, e)
             return
         if kind == "list":
             method = solved[1]
+            self.check_partial_read(e.callee.base)
             self.list_receiver_borrow(e, method)
             for a in e.args:
                 self.use(a)
@@ -3068,6 +3204,7 @@ class BorrowChecker:
         if kind == "method":
             info = solved[1]
             recv = e.callee.base
+            self.check_partial_read(recv)
             auto = getattr(e, "self_auto", "none")
             if info.self_mode is None:
                 self.consume_place(recv, e)
@@ -3223,11 +3360,28 @@ class BorrowChecker:
                 self.use(s.value)
                 bv.moved = False
                 bv.uninit = False
+                bv.moved_paths.clear()
             elif isinstance(s.target, ast.Field):
                 roots = self.place_roots(s.target.base, s)
                 self.require_mutable_roots(roots, s, "assign to")
                 self.check_no_borrows(roots, s, "assign through")
                 self.use(s.value)
+                path = self.place_path(s.target)
+                if path is not None and path[1]:
+                    bv = self.lookup(path[0])
+                    if bv is not None:
+                        parent = [p for p in bv.moved_paths
+                                  if len(p) < len(path[1])
+                                  and path[1][:len(p)] == p]
+                        if parent:
+                            self.err(f"cannot assign through partially moved "
+                                     f"value `{path[0]}`", s,
+                                     "reassign the whole value first")
+                        bv.moved_paths = {
+                            p for p in bv.moved_paths
+                            if not (len(p) >= len(path[1])
+                                    and p[:len(path[1])] == path[1])
+                        }
             elif isinstance(s.target, ast.Index):
                 roots = self.place_roots(s.target.base, s)
                 self.require_mutable_roots(roots, s, "assign to")
@@ -3331,14 +3485,21 @@ class BorrowChecker:
                          node, "declare it with `var`")
 
     def loop_guard(self, body_fn):
-        before = {name: bv.moved for sc in self.scopes for name, bv in sc.items()}
+        before = {name: (bv.moved, frozenset(bv.moved_paths))
+                  for sc in self.scopes for name, bv in sc.items()}
         self.loop_depth += 1
         body_fn()
         self.loop_depth -= 1
         for sc in self.scopes:
             for name, bv in sc.items():
-                if bv.moved and not before.get(name, False) and name in before:
-                    self.err(f"`{name}` is moved inside a loop", bv,
+                old_moved, old_paths = before.get(name, (False, frozenset()))
+                if name not in before:
+                    continue
+                new_paths = bv.moved_paths - old_paths
+                if (bv.moved and not old_moved) or new_paths:
+                    what = (self.field_label(name, next(iter(new_paths)))
+                            if new_paths else f"`{name}`")
+                    self.err(f"`{what}` is moved inside a loop", bv,
                              "each iteration would use it again; move it before the loop")
 
     def check_for(self, s):
@@ -3348,10 +3509,8 @@ class BorrowChecker:
             snap = self.snapshot()
             self.push()
             self.bind(s.name, s.elem_ty, False, s)
-            self.loop_depth += 1
             self.restore(snap)
-            self.check_block(s.body, new_scope=False)
-            self.loop_depth -= 1
+            self.loop_guard(lambda: self.check_block(s.body, new_scope=False))
             self.pop()
             end = self.snapshot()
             self.restore(snap)
@@ -3371,10 +3530,8 @@ class BorrowChecker:
             snap = self.snapshot()
             self.push()
             self.bind(s.name, s.elem_ty, False, s)
-            self.loop_depth += 1
             self.restore(snap)
-            self.check_block(s.body, new_scope=False)
-            self.loop_depth -= 1
+            self.loop_guard(lambda: self.check_block(s.body, new_scope=False))
             self.pop()
             end = self.snapshot()
             self.restore(snap)

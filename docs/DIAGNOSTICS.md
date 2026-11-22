@@ -23,8 +23,8 @@ error[E0301]: borrow error: returned borrow must be derived from `x`
 | `E0203` | Non-exhaustive `match` |
 | `E0300` | General borrow-checker error |
 | `E0301` | Returned reference/view outlives its source |
-| `E0302` | Move or assignment while borrowed |
-| `E0303` | Use after move |
+| `E0302` | Move/assignment while borrowed, or an unsupported partial move |
+| `E0303` | Use after move, use of a moved field, or use of a partially moved value |
 | `E0304` | Mutable/shared borrow conflict |
 | `E0305` | Assignment to an immutable binding |
 | `E0306` | Read/use before initialization |

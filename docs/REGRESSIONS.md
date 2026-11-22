@@ -291,6 +291,46 @@ Tests: `eager-default-drop`, `match-all-literal-fields`,
 `drop-rc-field-rejected`, `drop-shared-field-rejected`,
 `drop-deref-shared-field-rejected`, `eq-temp-struct-drop`.
 
+## 13. Partial field moves and loop/temporary cleanup (fixed 0.8.10)
+
+```atrat
+struct Person:
+    name: String
+    city: String
+
+let p = Person { name: "Ada".clone(), city: "London".clone() }
+let name = p.name
+print(p.city)
+```
+
+Moving a field used to mark the whole owner moved, so either sibling fields
+became unusable or the owner's remaining fields leaked. Field moves now record
+a path in the checker and zero the source field in codegen. The owner's normal
+destructor drops only the untouched fields. Reads of `p.name`, duplicate moves,
+and moving the whole of `p` are rejected; `p.city` remains usable and
+`p.name = ...` restores the field.
+
+The same zeroing rule makes partial moves sound through nested fields and
+`Box` payloads. `Rc`, shared/`&mut` references, raw pointers and indexed elements
+remain rejected because a shared or non-addressable owner cannot be zeroed
+safely.
+
+Two temporaries-at-scope bugs were found while testing this:
+
+- Materialised expression temporaries were only in statement-end cleanup, so an
+  early `?`, `return`, `break` or panic leaked them. They now enter the current
+  drop scope and are marked dead after their normal drop.
+- `for` loops recorded the loop-body drop scope one past its actual index, so
+  `break`/`continue` skipped loop-local destructors and temporary pair operands.
+  The loop now stores the body scope index.
+
+Tests: `partial-move-fields`, `partial-move-nested`, `partial-move-temporary`,
+`partial-move-box-field`, `partial-move-enum-field`,
+`partial-move-assign-restore`, `partial-move-branch`, `move-moved-field`,
+`move-whole-partial`, `move-rc-field`, `move-shared-field`,
+`partial-move-loop`, `partial-move-method-read`, `panic-partial-move`,
+`eq-temp-break-cleanup`.
+
 ## Running them
 
 ```bash

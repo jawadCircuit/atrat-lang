@@ -578,6 +578,22 @@ fn main() -> i32:
         "hi p" + chr(10) + "hi p" + chr(10) + "hi int" + chr(10) + "1" + chr(10) + "2" + chr(10),
     ),
     (
+        "eq-temp-break-cleanup",
+        """
+struct P:
+    r: Rc<i64>
+
+fn main() -> i32:
+    let r = rc(5)
+    for i in 0..1:
+        if P { r: r.clone() } == P { r: r.clone() }:
+            break
+    print(r.strong_count())
+    return 0
+""",
+        "1" + chr(10),
+    ),
+    (
         "eq-temp-struct-drop",
         """
 struct P:
@@ -620,6 +636,134 @@ fn main() -> i32:
 """,
         "2" + chr(10) + "1" + chr(10) + "5" + chr(10) + "1" + chr(10)
         + "true" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "partial-move-branch",
+        """
+struct P:
+    a: String
+    b: String
+
+fn take(flag: bool) -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    if flag:
+        let s = p.a
+        print(s)
+    print(p.b)
+    return 0
+
+fn main() -> i32:
+    take(true)
+    take(false)
+    return 0
+""",
+        "a" + chr(10) + "b" + chr(10) + "b" + chr(10),
+    ),
+    (
+        "partial-move-fields",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    let s = p.a
+    print(s)
+    print(p.b)
+    return 0
+""",
+        "a" + chr(10) + "b" + chr(10),
+    ),
+    (
+        "partial-move-nested",
+        """
+struct Inner:
+    a: String
+    b: String
+
+struct P:
+    inner: Inner
+    c: String
+
+fn main() -> i32:
+    let p = P { inner: Inner { a: "a".clone(), b: "b".clone() }, c: "c".clone() }
+    let s = p.inner.a
+    print(s)
+    print(p.inner.b)
+    print(p.c)
+    return 0
+""",
+        "a" + chr(10) + "b" + chr(10) + "c" + chr(10),
+    ),
+    (
+        "partial-move-temporary",
+        """
+struct P:
+    a: String
+    b: String
+
+fn make() -> P:
+    return P { a: "made".clone(), b: "rest".clone() }
+
+fn main() -> i32:
+    let s = P { a: "a".clone(), b: "b".clone() }.a
+    print(s)
+    let t = make().a
+    print(t)
+    return 0
+""",
+        "a" + chr(10) + "made" + chr(10),
+    ),
+    (
+        "partial-move-box-field",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = box(P { a: "a".clone(), b: "b".clone() })
+    let s = p.a
+    print(s)
+    print(p.b)
+    return 0
+""",
+        "a" + chr(10) + "b" + chr(10),
+    ),
+    (
+        "partial-move-enum-field",
+        """
+struct Holder:
+    maybe: Option<String>
+    other: String
+
+fn main() -> i32:
+    let h = Holder { maybe: Some("hello".clone()), other: "other".clone() }
+    let s = h.maybe.unwrap()
+    print(s)
+    print(h.other)
+    return 0
+""",
+        "hello" + chr(10) + "other" + chr(10),
+    ),
+    (
+        "partial-move-assign-restore",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    var p = P { a: "a".clone(), b: "b".clone() }
+    let s = p.a
+    p.a = "new".clone()
+    print(s)
+    print(p.a)
+    print(p.b)
+    return 0
+""",
+        "a" + chr(10) + "new" + chr(10) + "b" + chr(10),
     ),
     (
         "drop-field-in-place",
@@ -1393,7 +1537,40 @@ fn main() -> i32:
         "cannot drop a field through a shared reference",
     ),
     (
-        "move-field-rejected",
+        "partial-move-loop",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    for i in 0..2:
+        let s = p.a
+        print(s)
+    return 0
+""",
+        "borrow error",
+        "moved inside a loop",
+    ),
+    (
+        "partial-move-method-read",
+        """
+struct Holder:
+    maybe: Option<String>
+    other: String
+
+fn main() -> i32:
+    let h = Holder { maybe: Some("hello".clone()), other: "other".clone() }
+    let s = h.maybe.unwrap()
+    print(h.maybe.is_some())
+    return 0
+""",
+        "borrow error",
+        "use of moved field `h.maybe`",
+    ),
+    (
+        "move-moved-field",
         """
 struct P:
     a: String
@@ -1402,11 +1579,59 @@ struct P:
 fn main() -> i32:
     let p = P { a: "a".clone(), b: "b".clone() }
     let s = p.a
+    print(p.a)
+    return 0
+""",
+        "borrow error",
+        "use of moved field `p.a`",
+    ),
+    (
+        "move-whole-partial",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    let s = p.a
+    let q = p
+    print(q.b)
+    return 0
+""",
+        "borrow error",
+        "use of partially moved value `p`",
+    ),
+    (
+        "move-rc-field",
+        """
+struct P:
+    a: String
+
+fn main() -> i32:
+    let p = rc(P { a: "a".clone() })
+    let s = p.a
     print(s)
     return 0
 """,
         "borrow error",
-        "cannot move a non-Copy field out of `p`",
+        "cannot move a non-Copy field out of an `Rc` payload",
+    ),
+    (
+        "move-shared-field",
+        """
+struct P:
+    a: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone() }
+    let r = &p
+    let s = r.a
+    print(s)
+    return 0
+""",
+        "borrow error",
+        "because it is borrowed",
     ),
     (
         "use-after-move",
@@ -2250,6 +2475,22 @@ fn main() -> i32:
     return 0
 """,
         "loop boom",
+    ),
+    (
+        "panic-partial-move",
+        """
+struct P:
+    a: String
+    b: String
+
+fn main() -> i32:
+    let p = P { a: "a".clone(), b: "b".clone() }
+    let s = p.a
+    panic("partial boom")
+    print("unreachable {s}")
+    return 0
+""",
+        "partial boom",
     ),
     (
         "panic-match-literal",

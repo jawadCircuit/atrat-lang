@@ -1114,9 +1114,17 @@ static inline void atr_list_{key}_free({cname}* self) {{
             fn = self.ensure_cleanup(t)
             d = self.ensure_drop(t)
             if fn and d:
+                flag = self.alive_flag(tmp)
+                self.pre.append(f"bool {flag} = true;")
                 self.pre.append(f"atr_cleanup_register(&{tmp}, {fn});")
+                # Also put the temporary in the current drop scope. Normal
+                # statement end clears the flag after dropping; an early
+                # return, break, ? or panic then still has exactly one owner.
+                if self.drop_scopes:
+                    self.drop_scopes[-1].append((tmp, t))
                 self.pending.append(
-                    f"{self.cleanup_unregister(tmp)} {d}(&{tmp});")
+                    f"if ({flag}) {{ {self.cleanup_unregister(tmp)} "
+                    f"{d}(&{tmp}); {flag} = false; }}")
         return t, tmp
 
     def root_cvar(self, e):
@@ -1191,10 +1199,18 @@ static inline void atr_list_{key}_free({cname}* self) {{
 
         if isinstance(s, ast.If):
             cond = self.emit_expr(s.cond, consume=False)
-            out = [f"{pad}if ({cond}) {{"]
+            cond_pre = list(self.pre)
+            del self.pre[:]
+            out = [f"{pad}{p}" for p in cond_pre]
+            out.append(f"{pad}if ({cond}) {{")
             out.extend(self.emit_block(s.then_body, indent + 1))
             for c, body in s.elifs:
                 expr = self.emit_expr(c, consume=False)
+                # `emit_block` below resets self.pre, so lift this condition's
+                # temporary declarations before the chain. (Their initializers
+                # are still emitted once; this mirrors the old behaviour.)
+                out.extend(f"{pad}{p}" for p in self.pre)
+                del self.pre[:]
                 out.append(f"{pad}}} else if ({expr}) {{")
                 out.extend(self.emit_block(body, indent + 1))
             if s.else_body is not None:
@@ -1205,7 +1221,10 @@ static inline void atr_list_{key}_free({cname}* self) {{
 
         if isinstance(s, ast.While):
             cond = self.emit_expr(s.cond, consume=False)
-            out = [f"{pad}while ({cond}) {{"]
+            cond_pre = list(self.pre)
+            del self.pre[:]
+            out = [f"{pad}{p}" for p in cond_pre]
+            out.append(f"{pad}while ({cond}) {{")
             self.loop_stack.append(len(self.drop_scopes))
             out.extend(self.emit_block(s.body, indent + 1))
             self.loop_stack.pop()
@@ -1399,7 +1418,9 @@ static inline void atr_list_{key}_free({cname}* self) {{
             self.var_scopes.append({})
             self.drop_scopes.append([])
             self.var_scopes[-1][s.name] = (cvar, elem_t, False)
-            self.loop_stack.append(len(self.drop_scopes))
+            # The loop body scope is the current top; break/continue must drop
+            # it and any nested scopes, so record its index (not len).
+            self.loop_stack.append(len(self.drop_scopes) - 1)
             for st in s.body:
                 out.extend(self.emit_stmt(st, indent + 2))
             self.loop_stack.pop()
@@ -1428,11 +1449,12 @@ static inline void atr_list_{key}_free({cname}* self) {{
         self.var_scopes.append({})
         self.drop_scopes.append([])
         self.var_scopes[-1][s.name] = (cvar, elem_t, False)
+        # See the range loop above: loop_stack stores the body scope index.
         if isinstance(elem_t, TRef):
             out.append(f"{pad}        {elem_c} {cvar} = &{lst}->data[{idx}];")
         else:
             out.append(f"{pad}        {elem_c} {cvar} = {lst}->data[{idx}];")
-        self.loop_stack.append(len(self.drop_scopes))
+        self.loop_stack.append(len(self.drop_scopes) - 1)
         for st in s.body:
             out.extend(self.emit_stmt(st, indent + 2))
         self.loop_stack.pop()
@@ -1580,15 +1602,23 @@ static inline void atr_list_{key}_free({cname}* self) {{
             # schedule its drop for the end of the statement.
             _, tmp = self.materialize(e.base, "recv")
             base = tmp
-        if consume and not self.is_copy(e.ty):
-            root = self.root_cvar(e.base)
-            if root and self.root_has_flag(root):
-                self.mark_moved(root)
         if isinstance(bt, TCon) and bt.name in ("Box", "Rc"):
-            return f"((*(({base}).ptr)).f_{e.field})"
-        if isinstance(bt, (TRef, TPtr)):
-            return f"((*({base})).f_{e.field})"
-        return f"(({base}).f_{e.field})"
+            place = f"((*(({base}).ptr)).f_{e.field})"
+        elif isinstance(bt, (TRef, TPtr)):
+            place = f"((*({base})).f_{e.field})"
+        else:
+            place = f"(({base}).f_{e.field})"
+        if consume and not self.is_copy(e.ty):
+            # Partial move: copy the field value out, then overwrite the
+            # source with the all-zero value. Every generated destructor is
+            # null/zero safe, so the owner's scope-exit drop destroys only the
+            # fields that were not moved. This avoids per-runtime-field flags
+            # while keeping exactly-once destruction for the remaining fields.
+            tmp = self.temp("mv")
+            ct = self.ctype(self.concrete(e.ty))
+            return (f"({{ {ct} {tmp} = {place}; "
+                    f"memset(&({place}), 0, sizeof({place})); {tmp}; }})")
+        return place
 
     def emit_list_lit(self, e) -> str:
         t = self.concrete(e.ty)
@@ -1989,17 +2019,23 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 f"{tmp}.u.V_{'Ok' if op_t.name == 'Result' else 'Some'}.v0; }})")
 
     def enum_receiver_addr(self, base, consumes: bool) -> str:
+        if consumes and isinstance(base, ast.Field):
+            # A consumed field is moved into a temporary; emit_field zeroes
+            # the source field so the owner's later drop is still safe.
+            t = self.concrete(base.ty)
+            tmp = self.temp("en")
+            val = self.emit_expr(base, consume=True)
+            self.pre.append(f"{self.ctype(t)} {tmp} = {val};")
+            return f"(&{tmp})"
         place = self.addr_if_place(base)
         if place is not None:
             return f"(&({self.emit_expr(base, consume=consumes)}))"
         t, tmp = self.materialize(base, "en")
         if consumes and not self.is_copy(t):
-            d = self.ensure_drop(t)
-            # Ownership moves out of the temporary. Cancel both its normal
-            # statement-end drop and its panic-cleanup registration.
+            # Ownership moves out of the temporary. Mark it dead before any
+            # method can return or panic; statement-end cleanup becomes a no-op.
             self.pre.append(self.cleanup_unregister(tmp))
-            self.pending[:] = [
-                p for p in self.pending if f"{d}(&{tmp})" not in p]
+            self.pre.append(f"{self.alive_flag(tmp)} = false;")
         return f"(&{tmp})"
 
     def eager_temp(self, e, prefix="dflt"):

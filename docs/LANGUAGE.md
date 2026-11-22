@@ -55,6 +55,27 @@ type, including a float type (`let x: f64 = 1`).
 and structs/enums whose fields are all `Copy`. Everything else is move-only:
 `String`, `List<T>`, `Box<T>`, `Rc<T>`, and aggregates containing them.
 
+A field of a move-only aggregate can be moved individually:
+
+```atrat
+struct Person:
+    name: String
+    city: String
+
+var p = Person { name: "Ada".clone(), city: "London".clone() }
+let name = p.name       # p.name is moved and zeroed
+print(p.city)           # sibling field is still usable
+print(name)
+# print(p.name)         # rejected: use of moved field
+# let q = p             # rejected: p is partially moved
+```
+
+Nested fields and fields inside an owned `Box` follow the same rule. The source
+slot is overwritten with the all-zero value after the move, so the owner's
+normal destructor safely destroys only its remaining fields. A moved field can
+be restored by assignment. Moves through `Rc`, shared/`&mut` references, raw
+pointers and indexed elements are rejected.
+
 ## 3. Declarations
 
 ```atrat
@@ -542,13 +563,13 @@ list index out of bounds, division/modulo by zero, integer overflow in
 allocation failure.
 
 **Panic cleanup is not unwinding.** The process does not return to Atrat code,
-there is no `catch`/`recover`, and a panic cannot be intercepted. Objects that
-are only expression temporaries, or that are still under construction, are not
-guaranteed to be destroyed. A panic raised by a destructor during cleanup exits
-immediately without running the remaining destructors. Normal returns, branches,
-loops and explicit `drop` run destructors exactly once; panic cleanup covers
-registered live locals and parameters. This is documented rather than presented
-as Rust-style unwinding.
+there is no `catch`/`recover`, and a panic cannot be intercepted. Codegen now
+registers materialised expression temporaries in a statement drop scope, so
+early `return`/`?`/`break`/`continue` and panics drop them exactly once. Values
+still under construction (for example, a moved argument when a later argument
+panics) and user destructor panics remain outside that guarantee. Normal
+returns, branches, loops and explicit `drop` run generated destructors exactly
+once. This is documented rather than presented as Rust-style unwinding.
 
 ## 12. Grammar sketch
 

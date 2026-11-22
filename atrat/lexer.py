@@ -36,11 +36,16 @@ def diagnostic_code(err) -> str:
         return "E0302"
     if "cannot move a non-copy field" in msg:
         return "E0302"
+    if "cannot partially move" in msg or "cannot move a field out of" in msg:
+        return "E0302"
     if "cannot drop a field through" in msg:
         return "E0302"
     if "while it is borrowed" in msg and ("assign" in msg or "move" in msg):
         return "E0302"
-    if "use of moved value" in msg or "moved before it is initialized" in msg:
+    if ("use of moved value" in msg or "use of moved field" in msg
+            or "use of partially moved" in msg or "moved before it is initialized" in msg
+            or "because" in msg and "was moved out" in msg
+            or "cannot move a field of moved value" in msg):
         return "E0303"
     if "mutably borrowed" in msg or "as mutable while it is already" in msg             or "mutably borrow" in msg or "mutable borrow" in msg:
         return "E0304"

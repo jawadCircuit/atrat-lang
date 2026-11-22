@@ -21,13 +21,39 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection and enforced cross-file `pub` visibility; flat namespace, no separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 132 cases incl. 55 compile-fail, 9 panic-path and 4 multi-file tests; 500-case mutation fuzz smoke, ASan/UBSan CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 146 cases incl. 60 compile-fail, 10 panic-path and 4 multi-file tests; 500-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.10 added
+
+- Added **partial moves** for non-`Copy` fields. The checker tracks a path per
+  local (`p.inner.name`), allows sibling fields to stay usable, rejects reads of
+  moved fields, duplicate moves, whole-value moves after a partial move, and
+  moves through `Rc`, shared/`&mut` references, raw pointers or indexed
+  elements. Assignment to a moved field restores it.
+- Codegen implements partial moves by copying the field out and zeroing the
+  source place. Every generated destructor is null/zero safe, so the owner
+  later destroys exactly the remaining fields without a second owner. This is
+  equivalent to per-field runtime drop flags for the current type system.
+- Partial moves work through nested fields and owned `Box` payloads, and from
+  materialised temporary aggregates.
+- Materialised expression temporaries now join the current drop scope; early
+  `return`, `?`, `break`, `continue` and panic paths use the same exactly-once
+  cleanup as normal statement end.
+- Fixed `break`/`continue` cleanup in `for` loops: the loop-body drop scope is
+  now included, so loop-local owners and temporary pair operands are dropped.
+- `tests/sanitizers.py` now auto-detects a sanitizer-capable compiler, including
+  LLVM MinGW clang. Locally, all 146 tests plus lifecycle examples pass under
+  ASan+UBSan (Windows ASan has no LeakSanitizer); Linux CI still runs leak
+  detection.
+- **146/146 tests** (72 run, 60 compile-fail, 10 panic-path, 4 multi-file).
+- Remaining panic limit: no unwinding/catch; values under construction and a
+  panic raised by a destructor are still outside the cleanup guarantee.
 
 ## What 0.8.9 added
 
@@ -57,7 +83,7 @@ remaining blockers are listed with severity and an honest estimate.
 - Added regressions for eager defaults, literal-pattern matching, field drops,
   rejected field moves and rejected destructive drops through shared owners.
 - **132/132 tests** (64 run, 55 compile-fail, 9 panic-path, 4 multi-file).
-- Remaining limitation: no per-field partial-move drop flags yet.
+- Historical limitation (superseded by 0.8.10): no per-field partial moves yet.
 
 ## What 0.8.8 added
 
@@ -264,9 +290,9 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a flat include | Cross-file `pub` visibility is enforced and public interfaces cannot expose private types. Still no namespacing, per-field visibility, separate compilation or package boundaries. | 2–4 weeks |
-| C4 | No formal soundness evidence | The checker is hand-written; 132 tests, mutation fuzzing and ASan/UBSan CI cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No formal soundness evidence | The checker is hand-written; 146 tests, mutation fuzzing and ASan/UBSan cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
-| C6 | Panic is not unwinding or catchable | Live owning locals and parameters are now destroyed before the process exits with status 101, including across nested calls. There is no catch/recover, expression temporaries that never become locals can leak, and a panic inside a destructor stops remaining cleanup. | 3–6 weeks for a full panic strategy, more for cross-platform/ABI guarantees |
+| C6 | Panic is not unwinding or catchable | Live owning locals, parameters and materialised temporaries are destroyed before exit 101, including across nested calls and early control flow. There is no catch/recover; values under construction and user destructor panics remain gaps. | 3–6 weeks for a full panic strategy, more for cross-platform/ABI guarantees |
 
 ### High
 
@@ -288,7 +314,7 @@ remaining blockers are listed with severity and an honest estimate.
 - Closures cannot be nested or returned yet; capturing closures themselves work.
 - No slices; `List<T>` is the only sequence.
 - No overflow-checked arithmetic mode (only wrapping + traps for div/shift).
-- ASan/UBSan support exists via `ATRAT_CFLAGS`, but is unavailable in the local MinGW toolchain; CI runs it on Linux.
+- ASan/UBSan support exists via `ATRAT_CFLAGS`; `tests/sanitizers.py` auto-detects clang/gcc. The local LLVM MinGW clang and Linux CI both run it. Windows ASan lacks LeakSanitizer; Linux CI supplies leak detection.
 - No deterministic cross-platform behaviour for `char`/float formatting edge cases.
 - No benchmarks for real workloads (only micro-benchmarks).
 - `unsafe:` is a block, not an auditable function boundary.
@@ -338,7 +364,7 @@ At part-time effort (roughly 10–15 hours/week), multiply the calendar ranges b
 The largest uncertainty is not the parser or code generator. It is the work that
 turns a compiler into a platform: lifetime/escape semantics, a real standard
 library, module/package boundaries, full panic semantics, tooling, security response,
-and enough external use to find the bugs the current 132 tests cannot.
+and enough external use to find the bugs the current 146 tests cannot.
 
 ## Recommended path
 

@@ -95,7 +95,7 @@ point, and the generated C is available with `atrc emit-c`.
 | Modules / packaging / tooling | **Partial**: cross-file `pub` visibility enforced; no namespacing or separate compilation |
 | Production readiness | **No** |
 
-There are **132 end-to-end tests** covering successful programs, exact stdout,
+There are **146 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -176,17 +176,24 @@ production compiler**. The important current gaps:
   closure, non-Copy captures are read-only shared references; they cannot be
   moved out or mutated. Nested capturing closures and returning closures are
   not supported yet.
-- A non-`Copy` field cannot be moved out of an aggregate on its own; clone the
-  field or move the whole value. `drop(value.field)` destroys that field in
-  place. This avoids leaking the aggregate's remaining owned fields while
-  partial-move flags are not implemented.
+- **Partial moves** work for plain fields, nested fields and fields inside an
+  owned `Box`: `let name = person.name` moves that field, marks it unavailable
+  at compile time, and zeroes the source slot so the owner's destructor drops
+  only the remaining fields. The compiler tracks moved field paths, allows
+  sibling fields to be used, and rejects reading a moved field, moving the whole
+  partially moved value, moving the same field twice, or moves through `Rc`,
+  shared/`&mut` references and indexed elements. Assigning the field restores
+  it. `drop(value.field)` destroys the field in place and marks it moved.
+  This zeroing strategy is equivalent to per-field runtime drop flags for all
+  generated destructors, which are null/zero safe.
 - `Box<T>` and read-only `Rc<T>` exist; `Arc`, interior mutability and `Mutex` do not.
-- Panics clean up live owning locals and function parameters, then terminate with
-  status 101. They do not unwind, cannot be caught, and expression temporaries
-  that never become a local may still leak. A panic inside a destructor exits
-  without running the remaining cleanup. Normal returns and explicit `drop`
-  remain the complete, exactly-once paths; panic cleanup is best-effort for
-  registered locals and parameters.
+- Panics clean up live owning locals, function parameters and codegen-
+  materialised expression temporaries, then terminate with status 101. They do
+  not unwind and still cannot be caught: no `catch`/`recover` exists. Values
+  under construction (for example, an owned argument evaluated before a later
+  argument panics) and user destructor panics are not covered. Normal returns,
+  `break`/`continue`, `?` and explicit `drop` run generated destructors exactly
+  once. Panic cleanup remains best-effort rather than Rust-style unwinding.
 - `match` has no guards, ranges or or-patterns yet.
 - `unsafe:` is a block, not a function marker (`unsafe fn` is not implemented).
 - The C backend relies on GCC/Clang statement expressions.
@@ -227,11 +234,12 @@ docs/DESIGN.md           requirement-by-requirement design notes
 
 ```bash
 python tests/run_tests.py
+python tests/sanitizers.py   # auto-detects clang/gcc with ASan+UBSan
 ```
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **132/132** pass, including trait objects, supertraits, owned
+Currently **146/146** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised

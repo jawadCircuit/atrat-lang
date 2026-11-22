@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.10 — partial moves and local sanitizers
+
+- Support partial moves of non-`Copy` fields, including nested fields and fields
+  inside an owned `Box`. The checker tracks moved field paths, permits sibling
+  fields, rejects reads of moved fields and whole-value moves after a partial
+  move, and restores fields on assignment.
+- Codegen copies the moved field and zeroes the source place. Generated
+  destructors are null/zero safe, so the owner's later drop destroys exactly the
+  remaining fields. Moves through `Rc`, shared/`&mut` references, raw pointers
+  and indexed elements stay rejected.
+- Track materialised expression temporaries in the active drop scope so early
+  `return`/`?`/`break`/`continue` and panic paths do not leak them.
+- Fix `for`-loop `break`/`continue` cleanup to include the loop-body drop scope.
+- Make `tests/sanitizers.py` auto-detect clang or gcc with ASan+UBSan; local LLVM
+  MinGW and Linux CI both exercise it (Windows ASan has no LeakSanitizer).
+- **146/146 tests** (72 run, 60 compile-fail, 10 panic-path, 4 multi-file).
+- Still no panic unwinding/catch; values under construction and destructor
+  panics remain outside the cleanup guarantee.
+
 ## 0.8.9 — destruction edge cases
 
 - Drop a non-`Copy` match scrutinee after a literal-pattern arm instead of

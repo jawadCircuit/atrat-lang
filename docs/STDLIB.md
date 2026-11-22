@@ -197,19 +197,20 @@ no `Rc::get_mut` yet. `Arc`, threads and `Mutex` do not exist yet.
 - `drop(value)` performs destruction immediately and marks the binding moved.
 - `drop(value.field)` destroys that field in place; the owner remains usable and
   its destructor is idempotent for the dropped field.
-- Moving a non-`Copy` field out of an aggregate is rejected for now; clone the
-  field or move the whole value. This avoids leaking sibling fields while
-  partial moves lack per-field drop flags.
+- Moving a non-`Copy` field is supported. The source field is zeroed and marked
+  unavailable; the owner's destructor drops only the remaining fields. Sibling
+  fields stay usable, and assigning the field restores it. Moves through `Rc`,
+  shared/`&mut` references, raw pointers and indexed elements are rejected.
 - A partially initialized local cannot be read or have its fields assigned.
   Use a complete struct literal or assign the whole value.
 - `Box`/`Rc` payload destructors run recursively, including nested `Option`,
   `Result`, struct fields and trait objects.
-- **Panics clean up live owning locals and function parameters, then terminate
-  with status 101.** They do not unwind and cannot be caught. Expression
-  temporaries that never become a local and values still under construction may
-  leak; a panic inside a destructor stops the remaining cleanup. Do not use
-  panic cleanup as a substitute for normal control flow. Normal returns and
-  explicit `drop` still provide exactly-once destruction.
+- **Panics clean up live owning locals, function parameters and materialised
+  expression temporaries, then terminate with status 101.** They do not unwind
+  and cannot be caught. Values still under construction and user destructor
+  panics remain gaps. Do not use panic cleanup as a substitute for normal
+  control flow. Normal returns, `break`/`continue`, `?` and explicit `drop` still
+  provide exactly-once destruction.
 
 ## Trait objects
 
