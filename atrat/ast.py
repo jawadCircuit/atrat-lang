@@ -413,6 +413,7 @@ class Program:
     decls: list = field(default_factory=list)
     display_names: dict = field(default_factory=dict)
     modules: list = field(default_factory=list)
+    units: list = field(default_factory=list)
 
 
 def stamp_sources(node, source: str):

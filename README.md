@@ -50,8 +50,8 @@ below are part of the project, not fine print.
 Additional built-in conveniences include `read_file`, `write_file`, `env`,
 `args`, `now_ms`, `expr?`, `Option`/`Result` methods, capturing closures,
 `Box<T>`, `Rc<T>`, references in structs, `&dyn Trait`, generic impls,
-multi-file imports with module aliases, and panic cleanup for live owners
-(followed by exit 101).
+multi-file imports with module aliases, stable module interfaces and a
+dependency graph, and panic cleanup for live owners (followed by exit 101).
 
 This repository contains a working compiler, a borrow checker, a type checker, a
 C backend, a standard prelude, examples and an end-to-end test suite. It is an
@@ -69,6 +69,8 @@ cd atrat-lang
 ./atrc build app.atr -o app        # native executable
 ./atrc check app.atr               # types + borrows only
 ./atrc emit-c app.atr              # inspect the generated C
+./atrc interfaces app.atr          # write stable module interfaces + graph.json
+./atrc graph app.atr               # print dependency-first module order
 ```
 
 Requires Python 3.10+ and `gcc` or `clang` (C99 + GCC statement expressions).
@@ -93,12 +95,14 @@ point, and the generated C is available with `atrc emit-c`.
 | Recursive types, generics, traits, supertraits, `dyn` and `Box<dyn>` | **Working** for the documented subset |
 | Panic semantics | **Cleanup, not unwinding**: live owners are destroyed, then exit 101; no catch/recover |
 | Standard library | **Minimal** |
-| Modules / packaging / tooling | **Partial**: cross-file `pub`, qualified module aliases and duplicate names across modules; no per-field `pub`, separate compilation or package manager |
+| Modules / packaging / tooling | **Partial**: cross-file `pub`, qualified module aliases, deterministic module interfaces and a dependency graph; no per-field `pub`, separate compilation or package manager |
 | Production readiness | **No** |
 
-There are **154 end-to-end tests** covering successful programs, exact stdout,
-negative diagnostics and multi-file builds. The suite is useful, but it is not
-a proof of correctness, a security audit or a fuzzing campaign.
+There are **154 end-to-end language tests** covering successful programs, exact
+stdout, negative diagnostics and multi-file builds, plus a module-interface
+suite that checks stable IDs, deterministic JSON, dependency ordering and cache
+invalidation. The suites are useful, but they are not a proof of correctness, a
+security audit or a fuzzing campaign.
 
 ## A taste
 
@@ -173,8 +177,13 @@ production compiler**. The important current gaps:
   `&dyn u.Show`. Different modules may define the same public name. Imports
   without `as` keep the legacy unqualified import and also get a default alias;
   ambiguous unqualified imports are rejected. Cross-file `pub` is still
-  enforced, a public declaration cannot expose a private type or trait, and
-  there is still no per-field `pub`, separate compilation or package boundary.
+  enforced, and a public declaration cannot expose a private type or trait.
+- Each module has a stable project-relative ID and a deterministic JSON
+  interface (exports, signatures, layouts, traits, impls, dependency hashes).
+  `atrc interfaces` writes that build graph and `atrc graph` prints it. This is
+  the foundation for separate compilation, not separate compilation itself:
+  builds still merge into one C translation unit, and there is no per-field
+  `pub`, object cache, package boundary or package manager yet.
 - Closures capture Copy values by value and non-Copy values by move. Inside a
   closure, non-Copy captures are read-only shared references; they cannot be
   moved out or mutated. Nested capturing closures and returning closures are
@@ -221,6 +230,7 @@ atrat/
   check.py               declaration collection, HM inference, exhaustiveness,
                          borrow checker
   resolve.py             module units, aliases, qualified-name resolution
+  interfaces.py          stable module interfaces and dependency build graph
   codegen.py             monomorphising C99 backend
   runtime.py             embedded ~360-line C runtime
   prelude.atr            Option<T> and Result<T, E>, written in Atrat

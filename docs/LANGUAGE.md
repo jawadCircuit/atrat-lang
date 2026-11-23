@@ -126,6 +126,11 @@ extern fn getpid() -> i32
   inherit their struct's visibility; there is no per-field `pub` yet.
 - There is no separate compilation or package boundary yet: the compiler still
   builds one merged C translation unit, and every build recompiles it.
+- `atrc interfaces app.atr` writes deterministic per-module JSON interfaces and
+  `graph.json` under `.atrbuild/interfaces/`. `atrc graph app.atr` prints the
+  dependency-first module order. Module IDs are project-relative, exports are
+  fully type-qualified across modules, and dependency interface hashes are
+  recorded. This is build-graph groundwork, not object-file linking yet.
 - Traits declare method signatures; `impl Trait for Type:` provides them.
   Dispatch is static, and generic functions can require bounds (see below).
 

@@ -19,15 +19,32 @@ remaining blockers are listed with severity and an honest estimate.
 | Language stability | **No** | No 1.0 spec, no semver promise; breaking changes expected. |
 | Type system completeness | **Partial** | HM + ADTs + generics + generic impls + traits + defaults + supertraits + returned views + `&dyn`/`Box<dyn>`; no explicit lifetime parameters or associated types. |
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
-| Modules / packages | **Partial** | Multi-file imports with cycle detection, enforced cross-file `pub`, module aliases/qualified names and per-module name collision avoidance; no per-field `pub`, separate compilation or package manager. |
+| Modules / packages | **Partial** | Multi-file imports with cycle detection, enforced cross-file `pub`, module aliases/qualified names, stable project-relative module IDs, deterministic JSON interfaces and a dependency graph; no per-field `pub`, object cache, separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 154 cases incl. 60 compile-fail, 10 panic-path and 12 multi-file tests; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 154 language cases incl. 60 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.12 added
+
+- Added stable **project-relative module IDs** derived from paths, not file-stem
+  load order, so interface names do not depend on import order.
+- Added deterministic JSON `ModuleInterface` output: public functions and
+  signatures, struct layouts, enum variants, traits/methods/supertraits, impls,
+  compiler version, source hash and dependency interface hashes. Imported types
+  are fully qualified as `module::Type`.
+- Added a dependency-first build graph and `atrc interfaces` / `atrc graph`.
+- Public interface changes invalidate importing modules through dependency
+  hashes; private body changes alter only the module's own source hash.
+- Added `tests/interfaces_test.py` covering ordering, deterministic output,
+  imported-type qualification, private-body invalidation and public-change
+  propagation.
+- **154 language tests + interface suite**; separate compilation, object caches,
+  per-field `pub`, package boundaries and a package manager are still absent.
 
 ## What 0.8.11 added
 
@@ -307,7 +324,7 @@ remaining blockers are listed with severity and an honest estimate.
 | --- | --- | --- | --- |
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
-| C3 | Module system is a single merged unit | Cross-file `pub`, aliases, qualified names and duplicate names across modules work. Still no per-field visibility, separate compilation, package boundaries or conditional imports. | 2–4 weeks |
+| C3 | Module system is a single merged unit | Cross-file `pub`, aliases, qualified names, duplicate names, stable interfaces and a dependency graph work. Still no per-field visibility, object-file compilation, link cache, package boundaries or conditional imports. | 2–4 weeks |
 | C4 | No formal soundness evidence | The checker is hand-written; 154 tests, mutation fuzzing and ASan/UBSan cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 | C6 | Panic is not unwinding or catchable | Live owning locals, parameters and materialised temporaries are destroyed before exit 101, including across nested calls and early control flow. There is no catch/recover; values under construction and user destructor panics remain gaps. | 3–6 weeks for a full panic strategy, more for cross-platform/ABI guarantees |

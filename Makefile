@@ -4,6 +4,7 @@ PY ?= python
 
 test:
 	$(PY) tests/run_tests.py
+	$(PY) tests/interfaces_test.py
 
 demo:
 	$(PY) atrc run examples/demo.atr

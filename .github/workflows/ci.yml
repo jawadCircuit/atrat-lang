@@ -36,6 +36,8 @@ jobs:
         run: gcc --version
       - name: End-to-end tests
         run: python tests/run_tests.py
+      - name: Module interfaces and build graph
+        run: python tests/interfaces_test.py
       - name: Demo program
         run: python atrc run examples/demo.atr
       - name: Sanity-check generated C is warning-free

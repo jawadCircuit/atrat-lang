@@ -8,3 +8,4 @@ dist/
 demo.c
 demo.o
 atrat_demo_output.txt
+.atrbuild/

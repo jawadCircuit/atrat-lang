@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shlex
 import shutil
@@ -12,6 +13,7 @@ import tempfile
 from . import ast as _ast
 from .check import BorrowError, TypeError_, check_program
 from .codegen import CodegenError, generate
+from .interfaces import build_graph, write_interfaces
 from .lexer import AtratError, diagnostic_code, tokenize
 from .parser import Parser, parse
 from .runtime import RUNTIME
@@ -103,7 +105,8 @@ def _load_unit(path: str, seen: set, stack: list, units: list,
     stem = os.path.splitext(os.path.basename(filename))[0]
     source = os.path.realpath(filename)
     unit = Unit(source=source, stem=stem, decls=list(prog.decls),
-                is_root=(source == root_source), is_prelude=False)
+                is_root=(source == root_source), is_prelude=False,
+                source_hash=hashlib.sha256(text.encode("utf-8")).hexdigest())
     stack.append(canon)
     base = os.path.dirname(os.path.abspath(filename))
     for d in prog.decls:
@@ -127,7 +130,9 @@ def load_program(path: str):
             start = _register("<prelude>", prelude)
             pre_prog = _parse_with_offset("<prelude>", prelude, start)
             units.append(Unit(source="<prelude>", stem="prelude",
-                              decls=list(pre_prog.decls), is_prelude=True))
+                              decls=list(pre_prog.decls), is_prelude=True,
+                              source_hash=hashlib.sha256(
+                                  prelude.encode("utf-8")).hexdigest()))
             seen.add(os.path.realpath(PRELUDE))
     root_source = os.path.realpath(path)
     _load_unit(path, seen, [], units, root_source)
@@ -267,6 +272,44 @@ def cmd_run(args) -> int:
     return proc.returncode
 
 
+def cmd_interfaces(args) -> int:
+    try:
+        module, _, _ = compile_source(args.file)
+    except AtratError as e:
+        print(render_error(e), file=sys.stderr)
+        return 1
+    outdir = args.output or os.path.join(
+        os.path.dirname(os.path.abspath(args.file)), ".atrbuild", "interfaces")
+    try:
+        graph = write_interfaces(module, outdir)
+    except OSError as e:
+        print(f"atrc: cannot write interfaces to {outdir}: {e.strerror}",
+              file=sys.stderr)
+        return 1
+    print(f"wrote {len(graph['order'])} module interfaces to {outdir}")
+    if graph["order"]:
+        print("order: " + " -> ".join(graph["order"]))
+    return 0
+
+
+def cmd_graph(args) -> int:
+    import json
+    try:
+        module, _, _ = compile_source(args.file)
+    except AtratError as e:
+        print(render_error(e), file=sys.stderr)
+        return 1
+    graph, _ = build_graph(module)
+    if args.json:
+        json.dump(graph, sys.stdout, sort_keys=True, indent=2)
+        sys.stdout.write(chr(10))
+    else:
+        for node in graph["nodes"]:
+            deps = ", ".join(node["dependencies"])
+            print(f"{node['module']}" + (f" <- {deps}" if deps else ""))
+    return 0
+
+
 def cmd_runtime(args) -> int:
     sys.stdout.write(RUNTIME)
     return 0
@@ -314,6 +357,18 @@ def main(argv=None) -> int:
     common(sp)
     sp.add_argument("-o", "--output", default=None, help="write C to a file ('-' = stdout)")
     sp.set_defaults(func=cmd_emit_c)
+
+    sp = sub.add_parser("interfaces",
+                        help="write deterministic module interfaces and build graph")
+    sp.add_argument("file", help="source file (.atr)")
+    sp.add_argument("-o", "--output", default=None,
+                    help="interface output directory (default: <source>/.atrbuild/interfaces)")
+    sp.set_defaults(func=cmd_interfaces)
+
+    sp = sub.add_parser("graph", help="print the module dependency build graph")
+    sp.add_argument("file", help="source file (.atr)")
+    sp.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    sp.set_defaults(func=cmd_graph)
 
     sp = sub.add_parser("runtime", help="print the embedded C runtime")
     sp.set_defaults(func=cmd_runtime)

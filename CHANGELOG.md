@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.12 — stable module interfaces and build graph
+
+- Give every module a stable project-relative ID derived from its source path
+  instead of file-stem load order. Internal declaration prefixes are stable
+  across import-order changes.
+- Add deterministic JSON module interfaces: public function signatures, struct
+  layouts, enum variants, traits/methods/supertraits, impl signatures, compiler
+  version, source hash and dependency interface hashes. Imported type names are
+  qualified as `module::Type`.
+- Add a dependency-first build graph and CLI commands:
+  `atrc interfaces app.atr [-o DIR]` and `atrc graph app.atr [--json]`.
+- Public interface changes propagate through dependency hashes; private body
+  changes alter only the module's source hash.
+- Add `tests/interfaces_test.py` for stable ordering, deterministic output,
+  imported-type qualification, private-body invalidation and public-change
+  propagation.
+- **154 language tests + interface suite**. This is groundwork, not separate
+  compilation: C output is still one merged translation unit; no object cache,
+  per-field `pub`, package boundary or package manager yet.
+
 ## 0.8.11 — module aliases and qualified names
 
 - `import "util" as u` now creates a real namespace. Qualified functions,

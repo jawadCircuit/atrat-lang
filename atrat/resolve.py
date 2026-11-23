@@ -9,6 +9,7 @@ aliases are real.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import os
 import re
 
@@ -23,6 +24,8 @@ class Unit:
     decls: list
     imports: list = field(default_factory=list)  # list[(ast.Import, target source)]
     prefix: str = ""
+    module_id: str = ""
+    source_hash: str = ""
     is_root: bool = False
     is_prelude: bool = False
 
@@ -70,21 +73,41 @@ class Resolver:
         self.display: dict[str, str] = {}
 
     # -- setup ------------------------------------------------------------
+    def _module_id(self, source: str) -> str:
+        if source == "<prelude>":
+            return "<prelude>"
+        project_root = os.path.dirname(os.path.abspath(self.root_source))
+        rel = os.path.relpath(source, project_root).replace(os.sep, "/")
+        return os.path.splitext(rel)[0]
+
     def _allocate_prefixes(self):
         originals = {d.name for u in self.units for d in u.decls
                      if isinstance(d, (ast.FnDecl, ast.StructDecl,
                                        ast.EnumDecl, ast.TraitDecl))}
         used = set()
         for u in self.units:
+            u.module_id = self._module_id(u.source)
             if u.is_root or u.is_prelude:
                 u.prefix = ""
                 continue
-            base = _safe_stem(u.stem) + "__"
-            prefix = base
-            n = 2
-            while prefix in used or any((prefix + name) in originals for name in originals):
-                prefix = f"{base}{n}__"
-                n += 1
+            base = _safe_stem(u.module_id).strip("_") or "module"
+            digest = hashlib.sha1(u.module_id.encode("utf-8")).hexdigest()[:8]
+
+            def free(candidate):
+                return (candidate not in used
+                        and not any((candidate + name) in originals
+                                    for name in originals))
+
+            prefix = base + "__"
+            if not free(prefix):
+                # Sanitised IDs can collide (sub/math vs sub_math). Fall back to
+                # a stable hash segment, then numbered suffixes if even that
+                # collides with a user declaration.
+                prefix = f"{base}_{digest}__"
+                n = 2
+                while not free(prefix):
+                    prefix = f"{base}_{digest}_{n}__"
+                    n += 1
             used.add(prefix)
             u.prefix = prefix
 
@@ -485,6 +508,7 @@ class Resolver:
         prog = ast.Program(decls=decls)
         prog.display_names = dict(self.display)
         prog.modules = [u.source for u in self.units]
+        prog.units = list(self.units)
         return prog
 
 

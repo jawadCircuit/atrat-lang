@@ -362,6 +362,7 @@ Tests: `module-qualified`, `module-duplicate-names`,
 
 ```bash
 python tests/run_tests.py
+python tests/interfaces_test.py
 python tests/fuzz_smoke.py
 python tests/validation_matrix.py
 python tests/sanitizers.py       # auto-detects clang or gcc with ASan+UBSan

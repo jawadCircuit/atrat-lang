@@ -10,7 +10,7 @@ compatibility debt.
 
 Today Atrat has:
 
-- module aliases and qualified names now exist, but builds still merge everything into one translation unit; there is no separate compilation, per-field `pub` or package boundary;
+- module aliases, qualified names, stable interfaces and a dependency graph now exist, but builds still merge everything into one translation unit; there is no object cache, separate compilation, per-field `pub` or package boundary;
 - no stable language/spec version or deprecation policy;
 - a minimal standard library and no package boundary;
 - one compiler implementation and no binary/ABI contract.

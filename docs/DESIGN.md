@@ -193,8 +193,9 @@ still required.
    This is the largest remaining language hole.
 3. **Capturing closures** with environment structs/closure conversion, then
    iterator adapters (`map`/`filter`/`collect`).
-4. **Real modules**: visibility and namespacing landed; separate compilation,
-   per-field visibility and package boundaries remain.
+4. **Real modules**: visibility, namespacing, stable interfaces and a dependency
+   graph landed; object-file compilation, per-field visibility and package
+   boundaries remain.
 5. **Pattern ergonomics**: guards, or-patterns, range patterns, destructuring `let`.
 6. **Slices** (`&[T]`) and string slicing without copying.
 7. **Shared ownership**: `Rc`/`Arc`, interior mutability, `Mutex`, threads.
