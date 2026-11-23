@@ -110,15 +110,22 @@ extern fn getpid() -> i32
 - `@repr(C)` is accepted before a struct/enum; output C layout is already
   `repr(C)`-style.
 - `import "path"` (or `import a.b`) loads another file relative to the current
-  file. Modules share one flat namespace; duplicate imports are deduplicated and
-  cycles are rejected.
+  file. Duplicate imports are deduplicated and cycles are rejected.
+- `import "path" as alias` creates a module alias and does **not** bring the
+  module's names into scope unqualified. Use `alias.fn(...)`, `alias.Type`,
+  `alias.Enum.Variant`, `impl alias.Trait for alias.Type`, `&dyn alias.Trait`
+  and `alias.Type` in type positions. Imports without `as` keep the legacy
+  unqualified import and also get a default alias from the file stem, so both
+  `greet()` and `util.greet()` work.
+- Each module has its own declaration namespace. Two modules may export the
+  same public function or type; qualified use selects one. Two unqualified
+  imports that both export the same name are rejected as ambiguous.
 - `pub` is enforced across files. A non-`pub` function, struct, enum, trait or
   impl method is private to its file. A public declaration cannot expose a
   private type or trait through its signature, fields or variants. Struct fields
   inherit their struct's visibility; there is no per-field `pub` yet.
-- There is no module namespacing or separate compilation: two public
-  declarations with the same name still collide, and every build recompiles the
-  merged translation unit.
+- There is no separate compilation or package boundary yet: the compiler still
+  builds one merged C translation unit, and every build recompiles it.
 - Traits declare method signatures; `impl Trait for Type:` provides them.
   Dispatch is static, and generic functions can require bounds (see below).
 

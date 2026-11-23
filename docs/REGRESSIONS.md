@@ -331,14 +331,42 @@ Tests: `partial-move-fields`, `partial-move-nested`, `partial-move-temporary`,
 `partial-move-loop`, `partial-move-method-read`, `panic-partial-move`,
 `eq-temp-break-cleanup`.
 
+## 14. Modules were a flat namespace (fixed 0.8.11)
+
+```atrat
+import "util" as u
+
+fn main() -> i32:
+    print(u.greet("atrat"))
+    let p: u.Pair = u.Pair { a: 20, b: 22 }
+    return 0
+```
+
+`import ... as alias` was parsed but the alias was discarded, and the loader
+merged every file into one flat declaration list. Two modules could not both
+export `Pair`, and `u.Pair` was parsed as field access on an unknown variable.
+
+The loader now keeps each file as a `Unit`, assigns every non-root declaration
+an internal module namespace, and a resolver rewrites qualified references
+before the checker runs. Functions, structs, enums/variants, traits, generic
+bounds, `dyn` types and struct literals all resolve through aliases. Duplicate
+public names across modules are safe; ambiguous unqualified imports are rejected
+with a hint to qualify. Cross-file `pub` still applies to both access forms.
+
+Tests: `module-qualified`, `module-duplicate-names`,
+`module-qualified-enum`, `module-qualified-trait`, `module-default-alias`,
+`qualified-private`, `alias-only`, `ambiguous-import`.
+
+
 ## Running them
 
 ```bash
 python tests/run_tests.py
 python tests/fuzz_smoke.py
 python tests/validation_matrix.py
-python tests/sanitizers.py       # SKIP locally when the C toolchain lacks ASan
+python tests/sanitizers.py       # auto-detects clang or gcc with ASan+UBSan
 ```
 
-The Linux CI job runs the sanitizer pass with GCC. Local MinGW does not ship
-`libasan`/`libubsan`, so that pass is skipped there and is not claimed locally.
+The Linux CI job runs the sanitizer pass with GCC and leak detection. Locally,
+LLVM MinGW clang runs the same suite under ASan+UBSan; Windows ASan has no
+LeakSanitizer, so leak coverage is CI-only.

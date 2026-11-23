@@ -208,9 +208,9 @@ class Parser:
                 name = self.expect_name("type parameter").value
                 names.append(name)
                 if self.eat_op(":"):
-                    ts = [self.expect_name("trait name").value]
+                    ts = [self.parse_path("trait name")]
                     while self.eat_op("+"):
-                        ts.append(self.expect_name("trait name").value)
+                        ts.append(self.parse_path("trait name"))
                     bounds[name] = ts
                 if not self.eat_op(","):
                     break
@@ -307,7 +307,7 @@ class Parser:
         supertraits = []
         if self.at("NAME"):
             while True:
-                supertraits.append(self.expect_name("supertrait name").value)
+                supertraits.append(self.parse_path("supertrait name"))
                 if not self.eat_op(","):
                     break
             self.expect_op(":")
@@ -349,7 +349,7 @@ class Parser:
         line, col = self.peek().line, self.peek().col
         self.expect("KW", "impl")
         generics = self.parse_generics_opt()
-        first = self.expect_name("type or trait name").value
+        first = self.parse_path("type or trait name")
         # skip generic args on the first name
         if self.at_op("<"):
             self.parse_generics_opt()
@@ -357,7 +357,7 @@ class Parser:
         tyname = first
         if self.eat_kw("for"):
             trait_name = first
-            tyname = self.expect_name("type name").value
+            tyname = self.parse_path("type name")
             if self.at_op("<"):
                 self.parse_generics_opt()
         self.expect_op(":")
@@ -381,6 +381,12 @@ class Parser:
                              line=line, col=col)
 
     # -- types ------------------------------------------------------------
+    def parse_path(self, what="name"):
+        parts = [self.expect_name(what).value]
+        while self.eat_op("."):
+            parts.append(self.expect_name(what).value)
+        return ".".join(parts)
+
     def parse_type(self):
         t = self.peek()
         if t.kind == "OP" and t.value == "&":
@@ -417,10 +423,10 @@ class Parser:
             return ast.TyFn(params=params, ret=ret, line=t.line, col=t.col)
         if t.kind == "NAME" and t.value == "dyn":
             self.advance()
-            name = self.expect_name("trait name").value
+            name = self.parse_path("trait name")
             return ast.TyDyn(trait=name, line=t.line, col=t.col)
         if t.kind == "NAME":
-            self.advance()
+            name = self.parse_path("type name")
             args = []
             if self.at_op("<"):
                 self.advance()
@@ -429,7 +435,7 @@ class Parser:
                     if not self.eat_op(","):
                         break
                 self.expect_angle()
-            return ast.TyName(name=t.value, args=args, line=t.line, col=t.col)
+            return ast.TyName(name=name, args=args, line=t.line, col=t.col)
         raise self.error(f"expected a type, found {t.value!r}")
 
     # -- statements -------------------------------------------------------
@@ -679,6 +685,17 @@ class Parser:
             self.advance()
             if self.at_op("{"):
                 return self.parse_struct_lit(t)
+            # `module.Type { ... }` is a qualified struct literal. A plain
+            # `value.field` is left for postfix parsing.
+            save = self.pos
+            parts = [t.value]
+            while self.at_op(".") and self.peek(1).kind == "NAME":
+                self.advance()
+                parts.append(self.advance().value)
+            if len(parts) > 1 and self.at_op("{"):
+                tok = Token("NAME", ".".join(parts), t.line, t.col)
+                return self.parse_struct_lit(tok)
+            self.pos = save
             return ast.Name(name=t.value, line=t.line, col=t.col)
         if t.kind == "KW" and t.value == "self":
             self.advance()
@@ -779,11 +796,11 @@ class Parser:
             return ast.PatLit(value=segs[0].text, line=t.line, col=t.col)
         if t.kind == "NAME":
             self.advance()
-            enum_name = None
-            vname = t.value
-            if self.eat_op("."):
-                enum_name = t.value
-                vname = self.expect_name("variant name").value
+            parts = [t.value]
+            while self.eat_op("."):
+                parts.append(self.expect_name("variant name").value)
+            enum_name = ".".join(parts[:-1]) if len(parts) > 1 else None
+            vname = parts[-1]
             args = []
             if self.eat_op("("):
                 while not self.at_op(")"):

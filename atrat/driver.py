@@ -15,6 +15,7 @@ from .codegen import CodegenError, generate
 from .lexer import AtratError, diagnostic_code, tokenize
 from .parser import Parser, parse
 from .runtime import RUNTIME
+from .resolve import Unit, resolve_program
 from .version import __version__
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -86,7 +87,8 @@ def _resolve_import(spec: str, base_dir: str, node) -> str:
     return rel
 
 
-def _load_module(path: str, seen: set, stack: list, out: list, via=None):
+def _load_unit(path: str, seen: set, stack: list, units: list,
+                root_source: str, via=None):
     from . import ast as _ast
     canon = os.path.realpath(path)
     if canon in stack:
@@ -98,34 +100,38 @@ def _load_module(path: str, seen: set, stack: list, out: list, via=None):
     text, filename = read_source(path)
     start = _register(filename, text)
     prog = _parse_with_offset(filename, text, start)
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    source = os.path.realpath(filename)
+    unit = Unit(source=source, stem=stem, decls=list(prog.decls),
+                is_root=(source == root_source), is_prelude=False)
     stack.append(canon)
     base = os.path.dirname(os.path.abspath(filename))
     for d in prog.decls:
         if isinstance(d, _ast.Import):
             dep = _resolve_import(d.path, base, d)
-            _load_module(dep, seen, stack, out, via=d)
+            dep_canon = os.path.realpath(dep)
+            _load_unit(dep, seen, stack, units, root_source, via=d)
+            unit.imports.append((d, dep_canon))
     stack.pop()
     seen.add(canon)
-    out.extend(d for d in prog.decls if not isinstance(d, _ast.Import))
+    units.append(unit)
 
 
 def load_program(path: str):
-    from . import ast as _ast
     _reset_sources()
-    prelude = ""
+    units = []
+    seen = set()
     if os.path.isfile(PRELUDE):
         prelude, _ = read_source(PRELUDE)
-    decls = []
-    seen = set()
-    if prelude.strip():
-        start = _register("<prelude>", prelude)
-        pre_prog = _parse_with_offset("<prelude>", prelude, start)
-        decls.extend(pre_prog.decls)
-        seen.add(os.path.realpath(PRELUDE))
-    rest = []
-    _load_module(path, seen, [], rest)
-    prog = _ast.Program(decls=list(decls) + rest)
-    return prog
+        if prelude.strip():
+            start = _register("<prelude>", prelude)
+            pre_prog = _parse_with_offset("<prelude>", prelude, start)
+            units.append(Unit(source="<prelude>", stem="prelude",
+                              decls=list(pre_prog.decls), is_prelude=True))
+            seen.add(os.path.realpath(PRELUDE))
+    root_source = os.path.realpath(path)
+    _load_unit(path, seen, [], units, root_source)
+    return resolve_program(units, root_source)
 
 
 def render_error(err: AtratError, src: str = "", filename: str = "") -> str:

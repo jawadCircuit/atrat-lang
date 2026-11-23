@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.11 — module aliases and qualified names
+
+- `import "util" as u` now creates a real namespace. Qualified functions,
+  structs, enums/variants, traits, trait bounds and `dyn` trait types work:
+  `u.greet(...)`, `u.Pair`, `u.Color.Red`, `impl u.Show for u.Pair`,
+  `<T: u.Show>`, `&dyn u.Show` and `Box<dyn u.Show>`.
+- Each non-root file gets an internal declaration namespace, so two modules can
+  export the same public name without colliding.
+- Imports without `as` retain legacy unqualified imports and also get a default
+  alias derived from the file stem. Ambiguous unqualified names are rejected
+  with a hint to use an alias.
+- Cross-file `pub` remains enforced for qualified and unqualified access; public
+  surfaces still cannot expose private types or traits.
+- Added multi-file tests for qualified functions/structs/enums/traits, generic
+  bounds, trait objects, duplicate names, default aliases, private members and
+  ambiguous imports.
+- **154/154 tests** (72 run, 60 compile-fail, 10 panic-path, 12 multi-file).
+- Still no per-field `pub`, separate compilation or package manager.
+
 ## 0.8.10 — partial moves and local sanitizers
 
 - Support partial moves of non-`Copy` fields, including nested fields and fields

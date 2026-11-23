@@ -175,15 +175,15 @@ lifetimes are the planned path beyond this boundary.
 | Conservative borrows | simple, predictable checker | references cannot escape or live in structs |
 | `str` vs `String` | no hidden copies for literals/views | one extra concept and a coercion rule |
 | Python front end | fast to build and extend, no build step | compiler speed is Python-speed |
-| Single file + prelude | simple, predictable | no module system |
+| Merged module units | simple, predictable | no separate compilation or package boundaries |
 
 ## Production readiness
 
 "Production ready" is a much larger bar than "works". The audited gap list,
 scorecard and the concrete gates Atrat must pass are in
 [READINESS.md](READINESS.md). In short: 0.2 hardened soundness and scaffolding;
-modules, traits, lifetimes, tooling and a real standard library are still
-required.
+separate compilation, lifetimes, tooling and a real standard library are
+still required.
 
 ## Roadmap, in priority order
 
@@ -193,7 +193,8 @@ required.
    This is the largest remaining language hole.
 3. **Capturing closures** with environment structs/closure conversion, then
    iterator adapters (`map`/`filter`/`collect`).
-4. **Real modules**: visibility, namespacing and separate compilation.
+4. **Real modules**: visibility and namespacing landed; separate compilation,
+   per-field visibility and package boundaries remain.
 5. **Pattern ergonomics**: guards, or-patterns, range patterns, destructuring `let`.
 6. **Slices** (`&[T]`) and string slicing without copying.
 7. **Shared ownership**: `Rc`/`Arc`, interior mutability, `Mutex`, threads.

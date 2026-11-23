@@ -111,6 +111,10 @@ class Module:
         self.variants: dict[str, list[VariantRef]] = {}
         self.program: ast.Program | None = None
         self.warnings: list[str] = []
+        self.display: dict[str, str] = {}
+
+    def display_name(self, name: str) -> str:
+        return self.display.get(name, name)
 
     def require_visible(self, info, node, name: str | None = None):
         """Reject a cross-file use of a declaration that is not `pub`.
@@ -126,6 +130,7 @@ class Module:
         if getattr(info, "public", False):
             return
         label = name or getattr(info, "name", "declaration")
+        label = self.display_name(label)
         module = os.path.basename(target)
         raise TypeError_(
             f"'{label}' is private to module '{module}'",
@@ -225,6 +230,7 @@ class Module:
 def collect(prog: ast.Program) -> Module:
     m = Module()
     m.program = prog
+    m.display = dict(getattr(prog, "display_names", {}) or {})
     u = m.u
 
     def ty(node, generics: dict[str, TVar], ctx: str):
@@ -570,10 +576,10 @@ def collect(prog: ast.Program) -> Module:
                 continue
             checked.add(key)
             raise TypeError_(
-                f"public {owner_name} exposes private type '{name}'",
+                f"public {owner_name} exposes private type '{m.display_name(name)}'",
                 getattr(info.decl, "line", 0),
                 getattr(info.decl, "col", 0),
-                f"declare type '{name}' as `pub` or remove it from the public interface")
+                f"declare type '{m.display_name(name)}' as `pub` or remove it from the public interface")
 
     def check_bound_names(owner_name, info):
         if not getattr(info, "public", False):
@@ -589,10 +595,10 @@ def collect(prog: ast.Program) -> Module:
                 if getattr(target, "public", False):
                     continue
                 raise TypeError_(
-                    f"public {owner_name} exposes private trait '{name}'",
+                    f"public {owner_name} exposes private trait '{m.display_name(name)}'",
                     getattr(info.decl, "line", 0),
                     getattr(info.decl, "col", 0),
-                    f"declare trait '{name}' as `pub` or remove it from the public interface")
+                    f"declare trait '{m.display_name(name)}' as `pub` or remove it from the public interface")
 
     for info in list(m.fns.values()) + list(m.methods.values()):
         check_names(f"function '{info.name}'", info, list(info.params) + [info.ret])

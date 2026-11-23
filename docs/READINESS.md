@@ -19,15 +19,34 @@ remaining blockers are listed with severity and an honest estimate.
 | Language stability | **No** | No 1.0 spec, no semver promise; breaking changes expected. |
 | Type system completeness | **Partial** | HM + ADTs + generics + generic impls + traits + defaults + supertraits + returned views + `&dyn`/`Box<dyn>`; no explicit lifetime parameters or associated types. |
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
-| Modules / packages | **Partial** | Multi-file imports with cycle detection and enforced cross-file `pub` visibility; flat namespace, no separate compilation or package manager. |
+| Modules / packages | **Partial** | Multi-file imports with cycle detection, enforced cross-file `pub`, module aliases/qualified names and per-module name collision avoidance; no per-field `pub`, separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 146 cases incl. 60 compile-fail, 10 panic-path and 4 multi-file tests; 500-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 154 cases incl. 60 compile-fail, 10 panic-path and 12 multi-file tests; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.11 added
+
+- Added real module aliases and qualified names. `import "util" as u` supports
+  `u.fn(...)`, `u.Type`, `u.Enum.Variant`, `impl u.Trait for u.Type`,
+  generic bounds and `&dyn u.Trait` / `Box<dyn u.Trait>`.
+- Each non-root file gets an internal declaration namespace. Duplicate public
+  names in different modules no longer collide, and using the wrong module's
+  name is a normal unknown-name error, not a silent collision.
+- Imports without `as` retain the legacy unqualified behavior and also get a
+  default alias from the file stem. Ambiguous unqualified names from multiple
+  imports are rejected with a hint to use an alias.
+- Cross-file `pub` remains enforced for qualified and unqualified access, and
+  public surfaces still cannot expose private types or traits.
+- Added multi-file coverage for qualified functions, structs, enums, traits,
+  generic trait bounds, `dyn` trait objects, duplicate names and default aliases.
+- **154/154 tests** (72 run, 60 compile-fail, 10 panic-path, 12 multi-file).
+- Still no per-field `pub`, separate compilation, package manager or conditional
+  imports.
 
 ## What 0.8.10 added
 
@@ -97,8 +116,7 @@ remaining blockers are listed with severity and an honest estimate.
   negative coverage for a private function, a private struct and an exposed
   private type.
 - **119/119 tests** (56 run, 51 compile-fail, 8 panic-path, 4 multi-file).
-- Still not namespaced or separately compiled: imports merge into one flat
-  translation unit, public names can collide, and there is no per-field `pub`.
+- At 0.8.8, imports still merged into one flat translation unit and public names could collide; 0.8.11 added aliases, qualified names and per-module namespaces. Separate compilation and per-field `pub` remain absent.
 
 ## What 0.8.7 added
 
@@ -289,8 +307,8 @@ remaining blockers are listed with severity and an honest estimate.
 | --- | --- | --- | --- |
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
-| C3 | Module system is a flat include | Cross-file `pub` visibility is enforced and public interfaces cannot expose private types. Still no namespacing, per-field visibility, separate compilation or package boundaries. | 2–4 weeks |
-| C4 | No formal soundness evidence | The checker is hand-written; 146 tests, mutation fuzzing and ASan/UBSan cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C3 | Module system is a single merged unit | Cross-file `pub`, aliases, qualified names and duplicate names across modules work. Still no per-field visibility, separate compilation, package boundaries or conditional imports. | 2–4 weeks |
+| C4 | No formal soundness evidence | The checker is hand-written; 154 tests, mutation fuzzing and ASan/UBSan cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 | C6 | Panic is not unwinding or catchable | Live owning locals, parameters and materialised temporaries are destroyed before exit 101, including across nested calls and early control flow. There is no catch/recover; values under construction and user destructor panics remain gaps. | 3–6 weeks for a full panic strategy, more for cross-platform/ABI guarantees |
 
@@ -364,7 +382,7 @@ At part-time effort (roughly 10–15 hours/week), multiply the calendar ranges b
 The largest uncertainty is not the parser or code generator. It is the work that
 turns a compiler into a platform: lifetime/escape semantics, a real standard
 library, module/package boundaries, full panic semantics, tooling, security response,
-and enough external use to find the bugs the current 146 tests cannot.
+and enough external use to find the bugs the current 154 tests cannot.
 
 ## Recommended path
 

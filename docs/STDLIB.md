@@ -226,6 +226,6 @@ no `Rc::get_mut` yet. `Arc`, threads and `Mutex` do not exist yet.
 - Associated types and generic traits beyond the current method signatures
 - Nested or returning closures
 - `Arc`, threads, `Mutex`, interior mutability
-- Module namespacing and separate compilation (`pub` is cross-file only)
+- Separate compilation and a package boundary (`pub` and module aliases are cross-file only)
 - A formatter, LSP, debugger or package registry
 - A stable standard-library API

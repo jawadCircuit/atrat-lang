@@ -50,7 +50,8 @@ below are part of the project, not fine print.
 Additional built-in conveniences include `read_file`, `write_file`, `env`,
 `args`, `now_ms`, `expr?`, `Option`/`Result` methods, capturing closures,
 `Box<T>`, `Rc<T>`, references in structs, `&dyn Trait`, generic impls,
-multi-file imports, and panic cleanup for live owners (followed by exit 101).
+multi-file imports with module aliases, and panic cleanup for live owners
+(followed by exit 101).
 
 This repository contains a working compiler, a borrow checker, a type checker, a
 C backend, a standard prelude, examples and an end-to-end test suite. It is an
@@ -92,10 +93,10 @@ point, and the generated C is available with `atrc emit-c`.
 | Recursive types, generics, traits, supertraits, `dyn` and `Box<dyn>` | **Working** for the documented subset |
 | Panic semantics | **Cleanup, not unwinding**: live owners are destroyed, then exit 101; no catch/recover |
 | Standard library | **Minimal** |
-| Modules / packaging / tooling | **Partial**: cross-file `pub` visibility enforced; no namespacing or separate compilation |
+| Modules / packaging / tooling | **Partial**: cross-file `pub`, qualified module aliases and duplicate names across modules; no per-field `pub`, separate compilation or package manager |
 | Production readiness | **No** |
 
-There are **146 end-to-end tests** covering successful programs, exact stdout,
+There are **154 end-to-end tests** covering successful programs, exact stdout,
 negative diagnostics and multi-file builds. The suite is useful, but it is not
 a proof of correctness, a security audit or a fuzzing campaign.
 
@@ -167,11 +168,13 @@ production compiler**. The important current gaps:
   conservative and block-scoped: views cannot be rebound, stored beyond the
   block, or captured in ways that outlive their source. There are no explicit
   lifetime annotations yet.
-- Modules are still a flat namespace: `import` merges declarations and `pub`
-  is now enforced across files. A non-`pub` function/type cannot be used from
-  another file, and a public declaration cannot expose a private type or trait.
-  There is no module namespacing, per-field `pub`, separate compilation or
-  package boundary yet.
+- Modules now have real qualified access: `import "util" as u` supports
+  `u.greet(...)`, `u.Pair`, `u.Color.Red`, `impl u.Show for u.Pair` and
+  `&dyn u.Show`. Different modules may define the same public name. Imports
+  without `as` keep the legacy unqualified import and also get a default alias;
+  ambiguous unqualified imports are rejected. Cross-file `pub` is still
+  enforced, a public declaration cannot expose a private type or trait, and
+  there is still no per-field `pub`, separate compilation or package boundary.
 - Closures capture Copy values by value and non-Copy values by move. Inside a
   closure, non-Copy captures are read-only shared references; they cannot be
   moved out or mutated. Nested capturing closures and returning closures are
@@ -217,6 +220,7 @@ atrat/
   typesys.py             type representation, unification, substitutions
   check.py               declaration collection, HM inference, exhaustiveness,
                          borrow checker
+  resolve.py             module units, aliases, qualified-name resolution
   codegen.py             monomorphising C99 backend
   runtime.py             embedded ~360-line C runtime
   prelude.atr            Option<T> and Result<T, E>, written in Atrat
@@ -239,7 +243,7 @@ python tests/sanitizers.py   # auto-detects clang/gcc with ASan+UBSan
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **146/146** pass, including trait objects, supertraits, owned
+Currently **154/154** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised

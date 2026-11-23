@@ -2553,6 +2553,149 @@ fn main() -> i32:
         "main.atr",
         "hello, atrat\n42\n42\n",
     ),
+    (
+        "module-qualified",
+        {
+            "util.atr": """
+pub struct Pair:
+    a: i64
+    b: i64
+
+pub fn greet(name: str) -> String:
+    return "hello, {name}"
+
+fn hidden() -> i64:
+    return 9
+""",
+            "main.atr": """
+import "util" as u
+
+fn main() -> i32:
+    print(u.greet("atrat"))
+    let p: u.Pair = u.Pair { a: 20, b: 22 }
+    print(p.a + p.b)
+    return 0
+""",
+        },
+        "main.atr",
+        "hello, atrat\n42\n",
+    ),
+    (
+        "module-duplicate-names",
+        {
+            "a.atr": """
+pub fn name() -> String:
+    return "a"
+
+pub struct Item:
+    value: i64
+""",
+            "b.atr": """
+pub fn name() -> String:
+    return "b"
+
+pub struct Item:
+    value: i64
+""",
+            "main.atr": """
+import "a" as a
+import "b" as b
+
+fn main() -> i32:
+    print(a.name())
+    print(b.name())
+    let x: a.Item = a.Item { value: 1 }
+    let y: b.Item = b.Item { value: 2 }
+    print(x.value + y.value)
+    return 0
+""",
+        },
+        "main.atr",
+        "a\nb\n3\n",
+    ),
+    (
+        "module-qualified-enum",
+        {
+            "color.atr": """
+pub enum Color:
+    Red
+    Green
+    Custom(i64)
+""",
+            "main.atr": """
+import "color" as c
+
+fn label(x: c.Color) -> String:
+    match x:
+        c.Color.Red -> "red"
+        c.Color.Green -> "green"
+        c.Color.Custom(v) -> "custom"
+
+fn main() -> i32:
+    let a = c.Color.Red
+    let b = c.Color.Custom(7)
+    print(label(a))
+    print(label(b))
+    return 0
+""",
+        },
+        "main.atr",
+        "red\ncustom\n",
+    ),
+    (
+        "module-qualified-trait",
+        {
+            "show.atr": """
+pub trait Show:
+    fn show(&self) -> String
+""",
+            "main.atr": """
+import "show" as s
+
+struct Point:
+    x: i64
+
+impl s.Show for Point:
+    fn show(&self) -> String:
+        return "point"
+
+fn render<T: s.Show>(v: &T) -> String:
+    return v.show()
+
+fn dyn_render(v: &dyn s.Show) -> String:
+    return v.show()
+
+fn main() -> i32:
+    let p = Point { x: 1 }
+    print(render(&p))
+    print(dyn_render(&p))
+    let b: Box<dyn s.Show> = box(Point { x: 2 })
+    print(b.show())
+    return 0
+""",
+        },
+        "main.atr",
+        "point\npoint\npoint\n",
+    ),
+    (
+        "module-default-alias",
+        {
+            "util.atr": """
+pub fn greet() -> String:
+    return "hi"
+""",
+            "main.atr": """
+import "util"
+
+fn main() -> i32:
+    print(greet())
+    print(util.greet())
+    return 0
+""",
+        },
+        "main.atr",
+        "hi\nhi\n",
+    ),
 ]
 
 MULTI_FAIL_CASES = [
@@ -2617,6 +2760,72 @@ fn main() -> i32:
         "main.atr",
         "type error",
         "exposes private type 'Hidden'",
+    ),
+    (
+        "qualified-private",
+        {
+            "util.atr": """
+pub fn shown() -> i64:
+    return 1
+
+fn hidden() -> i64:
+    return 2
+""",
+            "main.atr": """
+import "util" as u
+
+fn main() -> i32:
+    print(u.shown())
+    print(u.hidden())
+    return 0
+""",
+        },
+        "main.atr",
+        "type error",
+        "private to module 'util.atr'",
+    ),
+    (
+        "alias-only",
+        {
+            "util.atr": """
+pub fn shown() -> i64:
+    return 1
+""",
+            "main.atr": """
+import "util" as u
+
+fn main() -> i32:
+    print(shown())
+    return 0
+""",
+        },
+        "main.atr",
+        "type error",
+        "unknown function 'shown'",
+    ),
+    (
+        "ambiguous-import",
+        {
+            "a.atr": """
+pub fn name() -> String:
+    return "a"
+""",
+            "b.atr": """
+pub fn name() -> String:
+    return "b"
+""",
+            "main.atr": """
+import "a"
+import "b"
+
+fn main() -> i32:
+    print(name())
+    return 0
+""",
+        },
+        "main.atr",
+        "type error",
+        "is ambiguous between a.atr, b.atr",
     ),
 ]
 
