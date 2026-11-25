@@ -278,61 +278,72 @@ class Lexer:
         else:
             self.emit("NAME", word, line, col)
 
+    def _digits(self, allowed, what: str, require: bool = True,
+                allow_sep: bool = True) -> str:
+        start = self.i
+        seen = False
+        last_sep = False
+        while self.i < self.n:
+            c = self.peek()
+            if c == "_":
+                if not allow_sep or not seen or last_sep:
+                    raise self.error(f"misplaced '_' in {what} literal")
+                last_sep = True
+                self.advance()
+                continue
+            if not allowed(c):
+                break
+            seen = True
+            last_sep = False
+            self.advance()
+        if last_sep:
+            raise self.error(f"misplaced '_' in {what} literal")
+        if require and not seen:
+            raise self.error(f"malformed {what} literal")
+        return self.src[start:self.i].replace("_", "")
+
     def _number(self) -> None:
         line, col = self.line, self.col
-        start = self.i
-        if self.peek() == "0" and self.peek(1) in "xX":
+        if self.peek() == "0" and self.peek(1) != "" and self.peek(1) in "xX":
             self.advance(2)
-            digits = self.i
-            while self.i < self.n and (self.peek().isdigit() or self.peek().lower() in "abcdef" or self.peek() == "_"):
-                self.advance()
-            raw = self.src[digits:self.i].replace("_", "")
-            if not raw:
-                raise self.error("malformed hexadecimal literal")
+            raw = self._digits(lambda c: c in "0123456789abcdefABCDEF",
+                               "hexadecimal")
             self.emit("INT", int(raw, 16), line, col)
             return
-        if self.peek() == "0" and self.peek(1) in "bB":
+        if self.peek() == "0" and self.peek(1) != "" and self.peek(1) in "bB":
             self.advance(2)
-            digits = self.i
-            while self.i < self.n and (self.peek() in "01_"):
-                self.advance()
-            raw = self.src[digits:self.i].replace("_", "")
-            if not raw:
-                raise self.error("malformed binary literal")
+            raw = self._digits(lambda c: c in "01", "binary")
             self.emit("INT", int(raw, 2), line, col)
             return
-        if self.peek() == "0" and self.peek(1) in "oO":
+        if self.peek() == "0" and self.peek(1) != "" and self.peek(1) in "oO":
             self.advance(2)
-            digits = self.i
-            while self.i < self.n and (self.peek() in "01234567_"):
-                self.advance()
-            raw = self.src[digits:self.i].replace("_", "")
-            if not raw:
-                raise self.error("malformed octal literal")
+            raw = self._digits(lambda c: c in "01234567", "octal")
             self.emit("INT", int(raw, 8), line, col)
             return
 
-        while self.i < self.n and (self.peek().isdigit() or self.peek() == "_"):
-            self.advance()
+        raw = self._digits(lambda c: c in "0123456789", "decimal")
         is_float = False
         if self.peek() == "." and self.peek(1) != ".":
             is_float = True
             self.advance()
-            while self.i < self.n and (self.peek().isdigit() or self.peek() == "_"):
-                self.advance()
+            frac = self._digits(lambda c: c in "0123456789", "decimal",
+                                require=False)
+            raw += "." + frac
         if self.peek() in "eE":
             # exponent must be followed by digits (allow sign)
             save_i, save_line, save_col = self.i, self.line, self.col
             self.advance()
+            sign = ""
             if self.peek() in "+-":
+                sign = self.peek()
                 self.advance()
             if not self.peek().isdigit():
                 self.i, self.line, self.col = save_i, save_line, save_col
             else:
                 is_float = True
-                while self.i < self.n and self.peek().isdigit():
-                    self.advance()
-        raw = self.src[start:self.i].replace("_", "")
+                exp = self._digits(lambda c: c in "0123456789", "exponent",
+                                   allow_sep=False)
+                raw += "e" + sign + exp
         if is_float:
             self.emit("FLOAT", float(raw), line, col)
         else:
@@ -374,7 +385,10 @@ class Lexer:
             if len(h) != 4 or any(ch not in "0123456789abcdefABCDEF" for ch in h):
                 raise self.error("invalid \\u escape (expected four hex digits)")
             self.advance(4)
-            return chr(int(h, 16))
+            cp = int(h, 16)
+            if 0xD800 <= cp <= 0xDFFF:
+                raise self.error("invalid \\u escape (surrogate code point)")
+            return chr(cp)
         raise self.error(f"unknown escape sequence \\{c}")
 
     def _string(self) -> None:

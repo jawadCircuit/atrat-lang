@@ -21,13 +21,38 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection, enforced cross-file `pub`, module aliases/qualified names, stable project-relative module IDs, deterministic JSON interfaces and a dependency graph; no per-field `pub`, object cache, separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 154 language cases incl. 60 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 169 language cases incl. 67 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.13 added
+
+- Fix ownership at operator boundaries: concatenation/comparison borrow their
+  operands, and `box`/`rc` consume their payload. Reuse-after-concatenation is
+  accepted and use-after-`box` is rejected.
+- Correct `Result.ok()`/`err()` payload tracking on borrowed receivers, closing
+  a heap-corruption hole when a non-`Copy` payload was moved out of a reference.
+- Add shared-borrow checks to concrete, trait, `dyn`, enum, string and list
+  method receivers, shared `match` and shared `for` iteration.
+- Reject borrows and assignments rooted in temporary values instead of emitting
+  dangling references.
+- Fix receiver adaptation for `&T`/`&mut T` method calls and `Rc` methods reached
+  through a reference.
+- Fix assignment evaluation order for fields and indexed elements, including
+  self-assignment and compound assignment; materialise an index exactly once.
+- Rework `if`/`elif`/`while` condition emission: one evaluation per test,
+  condition temporaries cleaned before the branch, `elif` temps in scope, and
+  `while` side effects re-evaluated every iteration.
+- Evaluate `min`/`max`/integer `abs` operands once.
+- Harden the lexer against malformed numeric separators, malformed exponents,
+  surrogate `\u` escapes and a decimal zero at end-of-file.
+- Add `starts_with`, `ends_with` and `contains` to `str`/`String`.
+- **169/169 language tests** (80 run, 67 compile-fail, 10 panic-path, 12
+  multi-file), plus interface, validation-matrix, fuzz and sanitizer suites.
 
 ## What 0.8.12 added
 

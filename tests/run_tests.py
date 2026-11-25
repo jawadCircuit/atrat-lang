@@ -1453,6 +1453,116 @@ fn main() -> i32:
 """,
         "2" + chr(10) + "1" + chr(10),
     ),
+    (
+        "binary-borrow-operands",
+        """
+fn main() -> i32:
+    let a = "hi".clone()
+    let b = a + "!"
+    print(a)
+    print(b)
+    return 0
+""",
+        "hi" + chr(10) + "hi!" + chr(10),
+    ),
+    (
+        "field-assign-self-reference",
+        """
+struct P:
+    s: String
+fn main() -> i32:
+    var p = P { s: "hi".clone() }
+    p.s = p.s + "!"
+    print(p.s)
+    return 0
+""",
+        "hi!" + chr(10),
+    ),
+    (
+        "while-condition-effects",
+        """
+fn check(i: i64) -> i64:
+    print("check {i}")
+    return i
+fn main() -> i32:
+    var i = 0
+    while to_str(check(i)).len() >= 0:
+        i += 1
+        if i == 3:
+            break
+    return 0
+""",
+        "check 0" + chr(10) + "check 1" + chr(10) + "check 2" + chr(10),
+    ),
+    (
+        "elif-condition-temp",
+        """
+fn main() -> i32:
+    let x = 1
+    if false:
+        print("a")
+    elif to_str(x).len() > 0:
+        print("b")
+    return 0
+""",
+        "b" + chr(10),
+    ),
+    (
+        "min-max-abs-single-eval",
+        """
+fn side() -> i64:
+    print("s")
+    return 1
+fn main() -> i32:
+    print(max(side(), side()))
+    print(abs(side()))
+    return 0
+""",
+        "s" + chr(10) + "s" + chr(10) + "1" + chr(10) + "s" + chr(10) + "1" + chr(10),
+    ),
+    (
+        "rc-borrow-method",
+        """
+fn main() -> i32:
+    let a = rc("x".clone())
+    let b = (&a).clone()
+    print(a.strong_count())
+    print(b.strong_count())
+    return 0
+""",
+        "2" + chr(10) + "2" + chr(10),
+    ),
+    (
+        "string-search-methods",
+        """
+fn main() -> i32:
+    let s = "hello world".clone()
+    print(s.starts_with("hello"))
+    print(s.ends_with("world"))
+    print(s.contains("lo w"))
+    print(s.contains("xyz"))
+    let needle = "world".clone()
+    print(s.ends_with(needle))
+    print(needle)
+    return 0
+""",
+        "true" + chr(10) + "true" + chr(10) + "true" + chr(10) +
+        "false" + chr(10) + "true" + chr(10) + "world" + chr(10),
+    ),
+    (
+        "compound-index-once",
+        """
+fn idx() -> usize:
+    print("i")
+    return 1
+fn main() -> i32:
+    var xs = [1, 2, 3]
+    xs[idx()] += 10
+    print(xs[1])
+    return 0
+""",
+        "i" + chr(10) + "12" + chr(10),
+    ),
 ]
 
 FAIL_CASES = [
@@ -2051,8 +2161,8 @@ fn main() -> i32:
     print(*w.r)
     return 0
 """,
-        "error[E0302]",
-        "cannot assign through `p` while it is borrowed",
+        "error[E0304]",
+        "cannot read `p` while it is mutably borrowed",
     ),
     (
         "box-ref-owner-drop",
@@ -2143,8 +2253,8 @@ fn bad(x: &i64) -> View:
 fn main() -> i32:
     return 0
 """,
-        "borrow error",
-        "returned borrow must be derived",
+        "type error",
+        "cannot borrow a temporary",
     ),
     (
         "drop-owner-with-view",
@@ -2369,6 +2479,92 @@ fn main() -> i32:
 """,
         "type error",
         "mismatched reference mutability",
+    ),
+    (
+        "borrow-temp-field",
+        """
+struct P:
+    x: i64
+fn make() -> P:
+    return P { x: 1 }
+fn main() -> i32:
+    let r = &make().x
+    print(*r)
+    return 0
+""",
+        "type error",
+        "cannot borrow a temporary",
+    ),
+    (
+        "borrow-temp-index",
+        """
+fn main() -> i32:
+    let r = &[1, 2, 3][0]
+    print(*r)
+    return 0
+""",
+        "type error",
+        "cannot borrow a temporary",
+    ),
+    (
+        "box-payload-use-after-move",
+        """
+fn main() -> i32:
+    let s = "x".clone()
+    let b = box(s)
+    print(s)
+    return 0
+""",
+        "borrow error",
+        "use of moved value",
+    ),
+    (
+        "result-ok-from-ref",
+        """
+fn main() -> i32:
+    let r: Result<String, i64> = Ok("x".clone())
+    let o = (&r).ok()
+    return 0
+""",
+        "type error",
+        "cannot move a non-Copy value",
+    ),
+    (
+        "while-condition-move",
+        """
+fn take(s: String) -> String:
+    return s
+fn main() -> i32:
+    let s = "x".clone()
+    var i = 0
+    while take(s).len() > 0:
+        i += 1
+        if i > 1:
+            break
+    return 0
+""",
+        "borrow error",
+        "moved inside a loop",
+    ),
+    (
+        "number-separator-misplaced",
+        """
+fn main() -> i32:
+    print(1__2)
+    return 0
+""",
+        "lex error",
+        "misplaced '_'",
+    ),
+    (
+        "surrogate-escape",
+        """
+fn main() -> i32:
+    print('\\uD800')
+    return 0
+""",
+        "lex error",
+        "surrogate code point",
     ),
 ]
 

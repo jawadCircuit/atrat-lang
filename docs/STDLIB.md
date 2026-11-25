@@ -38,6 +38,9 @@ print(owned + " " + view)
 | `s.len()` | Byte length |
 | `s.is_empty()` | Length is zero |
 | `s.clone()` | Owned copy |
+| `s.starts_with(prefix)` | Whether `s` begins with a string |
+| `s.ends_with(suffix)` | Whether `s` ends with a string |
+| `s.contains(needle)` | Whether `s` contains a string |
 | `a + b` | Concatenation |
 | `a += b` | Append/concatenate into an owned binding |
 | `a == b`, `a < b`, ... | String comparison |

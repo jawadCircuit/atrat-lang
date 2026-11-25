@@ -1198,33 +1198,62 @@ static inline void atr_list_{key}_free({cname}* self) {{
             return [f"{pad}{{ {self.ctype(t)} {tmp} = {val}; {d}(&{tmp}); }}"]
 
         if isinstance(s, ast.If):
-            cond = self.emit_expr(s.cond, consume=False)
-            cond_pre = list(self.pre)
-            del self.pre[:]
-            out = [f"{pad}{p}" for p in cond_pre]
-            out.append(f"{pad}if ({cond}) {{")
-            out.extend(self.emit_block(s.then_body, indent + 1))
-            for c, body in s.elifs:
-                expr = self.emit_expr(c, consume=False)
-                # `emit_block` below resets self.pre, so lift this condition's
-                # temporary declarations before the chain. (Their initializers
-                # are still emitted once; this mirrors the old behaviour.)
-                out.extend(f"{pad}{p}" for p in self.pre)
+            conditions = [(s.cond, s.then_body)] + list(s.elifs)
+
+            def condition_lines(cond, body, level):
+                # Condition temporaries belong to the condition, not to the
+                # enclosing function scope used by return/panic cleanup.
+                self.drop_scopes.append([])
+                expr = self.emit_expr(cond, consume=False)
+                pre = list(self.pre)
+                post = list(self.pending)
                 del self.pre[:]
-                out.append(f"{pad}}} else if ({expr}) {{")
-                out.extend(self.emit_block(body, indent + 1))
-            if s.else_body is not None:
-                out.append(f"{pad}}} else {{")
-                out.extend(self.emit_block(s.else_body, indent + 1))
-            out.append(f"{pad}}}")
-            return out
+                del self.pending[:]
+                self.drop_scopes.pop()
+                ctmp = self.temp("cond")
+                cpad = self.ind(level)
+                lines = [f"{cpad}{p}" for p in pre]
+                # Evaluate the condition exactly once and release its
+                # temporaries before entering either branch.
+                lines.append(f"{cpad}bool {ctmp} = {expr};")
+                lines.extend(f"{cpad}{p}" for p in post)
+                lines.append(f"{cpad}if ({ctmp}) {{")
+                lines.extend(self.emit_block(body, level + 1))
+                lines.append(f"{cpad}}}")
+                return lines
+
+            def build(index, level):
+                cond, body = conditions[index]
+                lines = condition_lines(cond, body, level)
+                has_next = index + 1 < len(conditions)
+                if has_next or s.else_body is not None:
+                    lines.append(f"{self.ind(level)}else {{")
+                    if has_next:
+                        lines.extend(build(index + 1, level + 1))
+                    else:
+                        lines.extend(self.emit_block(s.else_body, level + 1))
+                    lines.append(f"{self.ind(level)}}}")
+                return lines
+
+            return build(0, indent)
 
         if isinstance(s, ast.While):
+            self.drop_scopes.append([])
             cond = self.emit_expr(s.cond, consume=False)
-            cond_pre = list(self.pre)
+            pre = list(self.pre)
+            post = list(self.pending)
             del self.pre[:]
-            out = [f"{pad}{p}" for p in cond_pre]
-            out.append(f"{pad}while ({cond}) {{")
+            del self.pending[:]
+            self.drop_scopes.pop()
+            ctmp = self.temp("cond")
+            out = [f"{pad}while (1) {{"]
+            # The condition is re-evaluated on every iteration. Previously its
+            # materialized temporaries lived outside the loop, so calls and
+            # conversions in the condition only ran once.
+            out.extend(f"{pad}    {p}" for p in pre)
+            out.append(f"{pad}    bool {ctmp} = {cond};")
+            out.extend(f"{pad}    {p}" for p in post)
+            out.append(f"{pad}    if (!{ctmp}) {{ break; }}")
             self.loop_stack.append(len(self.drop_scopes))
             out.extend(self.emit_block(s.body, indent + 1))
             self.loop_stack.pop()
@@ -1315,19 +1344,29 @@ static inline void atr_list_{key}_free({cname}* self) {{
                 return [f"{pad}({place}) = {val};"]
             d = self.ensure_drop(t)
             ptr = self.temp("dst")
+            tmp = self.temp("asgv")
+            # Evaluate the value before dropping the old one: `p.s = p.s +
+            # "x"` and `p.s = p.s` must observe the live field, not the
+            # zeroed-out shell left behind by the destructor.
             return [f"{pad}{{ {ct}* {ptr} = &({place}); "
-                    f"{d}({ptr}); *{ptr} = {val}; }}"]
+                    f"{ct} {tmp} = {val}; {d}({ptr}); *{ptr} = {tmp}; }}"]
 
         op = s.op[:-1]
         if self.is_copy(t):
             val = self.emit_expr(s.value, consume=True)
-            return [f"{pad}({place}) = {self.arith(op, t, f'({place})', val)};"]
-        # Non-Copy compound assignment: build the new value, then replace.
-        rhs = self.emit_expr(s.value, consume=True)
-        new_val = self.bin_expr(op, t, f"({place})", s.value, rhs)
-        tmp = self.temp("nval")
-        out = [f"{pad}{{ {ct} {tmp} = {new_val};"]
+            if isinstance(target, ast.Name):
+                return [f"{pad}({place}) = "
+                        f"{self.arith(op, t, f'({place})', val)};"]
+            ptr = self.temp("dst")
+            return [f"{pad}{{ {ct}* {ptr} = &({place}); "
+                    f"*{ptr} = {self.arith(op, t, f'(*{ptr})', val)}; }}"]
+        # Non-Copy compound assignment: evaluate the right side as a borrow
+        # (operators never consume), build the new value, then replace.
+        rhs = self.emit_expr(s.value, consume=False)
         if isinstance(target, ast.Name):
+            new_val = self.bin_expr(op, t, f"({place})", s.value, rhs)
+            tmp = self.temp("nval")
+            out = [f"{pad}{{ {ct} {tmp} = {new_val};"]
             loc = self.lookup_local(target.name)
             cvar = loc[0]
             out.append(f"{pad}    if ({self.alive_flag(cvar)}) "
@@ -1336,10 +1375,13 @@ static inline void atr_list_{key}_free({cname}* self) {{
             out.append(f"{pad}    {cvar} = {tmp};")
             out.append(f"{pad}    {self.alive_flag(cvar)} = true;")
             out.append(f"{pad}    {self.cleanup_register(cvar, t)} }}")
-        else:
-            out.append(f"{pad}    {self.ensure_drop(t)}(&({place}));")
-            out.append(f"{pad}    ({place}) = {tmp}; }}")
-        return out
+            return out
+        ptr = self.temp("dst")
+        new_val = self.bin_expr(op, t, f"(*{ptr})", s.value, rhs)
+        tmp = self.temp("nval")
+        return [f"{pad}{{ {ct}* {ptr} = &({place}); "
+                f"{ct} {tmp} = {new_val}; {self.ensure_drop(t)}({ptr}); "
+                f"*{ptr} = {tmp}; }}"]
 
     def simple_bin(self, op, a, b):
         return f"(({a}) {op} ({b}))"
@@ -2174,6 +2216,10 @@ static inline void atr_list_{key}_free({cname}* self) {{
         et = self.concrete(rt.inner) if isinstance(rt, TRef) else rt
         c = self.ctype(et)
         val = self.emit_expr(base, consume=False)
+        if isinstance(rt, TRef):
+            # The C type is a pointer to the Rc struct; methods need the
+            # struct itself.
+            val = f"(*({val}))"
         tmp = self.temp("rc")
         if method == "clone":
             return (f"({{ {c} {tmp} = {val}; if ({tmp}.count) (*{tmp}.count)++; "
@@ -2189,6 +2235,13 @@ static inline void atr_list_{key}_free({cname}* self) {{
         base = e.callee.base
         if method == "clone":
             return f"atr_string_from_view({self.str_view(base)})"
+        if method in ("starts_with", "ends_with", "contains"):
+            left = self.str_view(base)
+            right = self.str_view(e.args[0])
+            fn = {"starts_with": "atr_str_starts_with",
+                  "ends_with": "atr_str_ends_with",
+                  "contains": "atr_str_contains"}[method]
+            return f"{fn}({left}, {right})"
         if isinstance(inner, TCon) and inner.name == "String":
             if isinstance(t, TRef):
                 addr = self.emit_expr(base, consume=False)
@@ -2279,12 +2332,20 @@ static inline void atr_list_{key}_free({cname}* self) {{
             a = self.emit_expr(e.args[0], consume=True)
             if _float_t(self.concrete(e.args[0].ty)):
                 return f"fabs({a})"
-            return f"(({a}) < 0 ? -({a}) : ({a}))"
+            t = self.ctype(self.concrete(e.args[0].ty))
+            tmp = self.temp("abs")
+            # Evaluate once: the operand may be a function call.
+            return (f"({{ {t} {tmp} = {a}; "
+                    f"({tmp} < 0 ? -{tmp} : {tmp}); }})")
         if name in ("min", "max"):
             a = self.emit_expr(e.args[0], consume=True)
             b = self.emit_expr(e.args[1], consume=True)
+            t = self.ctype(self.concrete(e.ty))
+            ta = self.temp("mina")
+            tb = self.temp("minb")
             op = "<" if name == "min" else ">"
-            return f"(({a}) {op} ({b}) ? ({a}) : ({b}))"
+            return (f"({{ {t} {ta} = {a}; {t} {tb} = {b}; "
+                    f"({ta} {op} {tb} ? {ta} : {tb}); }})")
         if name == "sqrt":
             return f"sqrt({self.emit_expr(e.args[0], consume=True)})"
         if name == "drop":

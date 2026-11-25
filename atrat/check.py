@@ -1148,6 +1148,9 @@ class FnChecker:
 
     # -- identifier / place type -----------------------------------------
     def infer_place(self, e):
+        if isinstance(e, (ast.Field, ast.Index, ast.Deref)) and not _is_stable_place(e):
+            self.err("cannot use a temporary value as a place", e,
+                     "bind the owner to a variable first")
         if isinstance(e, ast.Name):
             t = self.lookup(e.name)
             if t is None:
@@ -1393,10 +1396,10 @@ class FnChecker:
             base = self.infer(e.base)
             return self.deref_type(base, e)
         if isinstance(e, ast.Ref):
-            inner = self.infer_place(e.base) if _is_place(e.base) else self.infer(e.base)
-            if not _is_place(e.base):
+            if not _is_place(e.base) or not _is_stable_place(e.base):
                 self.err("cannot borrow a temporary", e,
-                         "bind it to a variable first")
+                         "bind the owner to a variable first")
+            inner = self.infer_place(e.base)
             return TRef(e.mut, inner)
         if isinstance(e, ast.Unary):
             operand = self.infer(e.operand)
@@ -1989,7 +1992,7 @@ class FnChecker:
         if isinstance(inner, TCon) and inner.name == "Result":
             ok_t, err_t = inner.args
             if name in ("unwrap", "expect", "unwrap_or", "ok", "err", "unwrap_err")                     and isinstance(t, TRef):
-                moved = err_t if name in ("ok", "unwrap_err") else ok_t
+                moved = err_t if name in ("err", "unwrap_err") else ok_t
                 if not self.m.is_copy(moved):
                     self.err(f"cannot move a non-Copy value out of `{t.show()}`", e,
                              "borrow the payload with `match` or clone it first")
@@ -2051,6 +2054,17 @@ class FnChecker:
                 self.expect_arity(e, 0)
                 e.solved = ("strmeth", "clone")
                 return STRING
+            if name in ("starts_with", "ends_with", "contains"):
+                self.expect_arity(e, 1)
+                got = self.u.resolve_deep(self.infer(e.args[0]))
+                if isinstance(got, TRef):
+                    got = self.u.resolve_deep(got.inner)
+                if not (isinstance(got, TCon) and got.name in ("str", "String")):
+                    self.err(f"`{name}` expects a string, found `{got.show()}`",
+                             e.args[0])
+                e.solved = ("strmeth", name)
+                e.param_types = [got]
+                return BOOL
             self.err(f"`{inner.show()}` has no method '{name}'", e)
 
         if isinstance(inner, TCon) and inner.name == "List":
@@ -2142,7 +2156,7 @@ class FnChecker:
                     if isinstance(t, TRef):
                         if self_ty.mut and not t.mut:
                             self.err(f"method '{name}' needs a mutable reference", e)
-                        auto = "none" if self_ty.mut == t.mut else "deref"
+                        auto = "none"
                         base_inner = t.inner
                     else:
                         auto = "mutref" if self_ty.mut else "ref"
@@ -2181,7 +2195,10 @@ class FnChecker:
                             self.err(f"method '{name}' needs a mutable reference to "
                                      f"`{inner.show()}`", e,
                                      "declare the value with `var` and borrow it with `&mut`")
-                        auto = "none" if self_ty.mut == t.mut else "deref"
+                        # Both `&T` and `&mut T` are represented by the same
+                        # C pointer, so pass it through unchanged. Only a
+                        # by-value self receiver needs an actual dereference.
+                        auto = "none"
                     else:
                         if self_ty.mut and not _is_mutable_place(e.callee.base):
                             pass  # reported by the borrow checker with a better message
@@ -2350,6 +2367,15 @@ class FnChecker:
 
 def _is_place(e) -> bool:
     return isinstance(e, (ast.Name, ast.Field, ast.Index, ast.Deref))
+
+
+def _is_stable_place(e) -> bool:
+    """True when a place is rooted in a named local rather than a temporary."""
+    if isinstance(e, ast.Name):
+        return True
+    if isinstance(e, (ast.Field, ast.Index, ast.Deref, ast.Ref)):
+        return _is_stable_place(e.base)
+    return False
 
 
 def _is_mutable_place(e) -> bool:
@@ -3007,8 +3033,10 @@ class BorrowChecker:
             self.pop()
             return
         if isinstance(e, ast.Binary):
-            self.use(e.left)
-            self.use(e.right)
+            # Operators only borrow their operands: string concatenation
+            # produces a fresh String and comparisons inspect values.
+            self.use(e.left, consume=False)
+            self.use(e.right, consume=False)
             return
         if isinstance(e, ast.StrLit):
             for seg in e.segs:
@@ -3137,7 +3165,9 @@ class BorrowChecker:
                                                  "wait until the borrow ends")
                                 bv.moved_paths.add(path[1])
                 else:
-                    self.use(a, consume=(name == "drop"))
+                    # box()/rc() take ownership of their payload, just like
+                    # drop(). Treating them as borrows allowed use-after-move.
+                    self.use(a, consume=(name in ("drop", "box", "rc")))
             return
         if kind == "dyn_method":
             recv = e.callee.base
@@ -3152,6 +3182,7 @@ class BorrowChecker:
                 self.check_mut_borrow(roots, e)
                 self.add_borrow(roots, True, e)
             else:
+                self.check_read_borrows(roots, e)
                 self.add_borrow(roots, False, e)
             for a in e.args:
                 self.use(a)
@@ -3164,6 +3195,7 @@ class BorrowChecker:
         if kind == "rc_method":
             self.check_partial_read(e.callee.base)
             roots = self.place_roots(e.callee.base, e)
+            self.check_read_borrows(roots, e)
             self.add_borrow(roots, False, e)
             return
         if kind == "trait_method":
@@ -3178,6 +3210,7 @@ class BorrowChecker:
                 self.add_borrow(roots, True, e)
             else:
                 roots = self.place_roots(recv, e)
+                self.check_read_borrows(roots, e)
                 self.add_borrow(roots, False, e)
             for a in e.args:
                 self.use(a)
@@ -3189,6 +3222,7 @@ class BorrowChecker:
             self.check_partial_read(recv)
             if method in ("is_some", "is_none", "is_ok", "is_err"):
                 roots = self.place_roots(recv, e)
+                self.check_read_borrows(roots, e)
                 self.add_borrow(roots, False, e)
             else:
                 self.consume_place(recv, e)
@@ -3198,7 +3232,10 @@ class BorrowChecker:
         if kind == "strmeth":
             self.check_partial_read(e.callee.base)
             roots = self.place_roots(e.callee.base, e)
+            self.check_read_borrows(roots, e)
             self.add_borrow(roots, False, e)
+            for a in e.args:
+                self.use(a, consume=False)
             return
         if kind == "list":
             method = solved[1]
@@ -3216,6 +3253,7 @@ class BorrowChecker:
                 self.consume_place(recv, e)
             elif auto == "ref" or (auto == "none" and info.self_mode == "&"):
                 roots = self.place_roots(recv, e)
+                self.check_read_borrows(roots, e)
                 self.add_borrow(roots, False, e)
             elif auto == "mutref" or (auto == "none" and info.self_mode == "&mut"):
                 if isinstance(recv, ast.Deref):
@@ -3259,12 +3297,14 @@ class BorrowChecker:
             self.check_mut_borrow(roots, e)
             self.add_borrow(roots, True, e)
         else:
+            self.check_read_borrows(roots, e)
             self.add_borrow(roots, False, e)
 
     def check_match(self, e):
         scrut = e.scrutinee
         if getattr(e, "match_by_ref", False):
             roots = self.place_roots(scrut, e)
+            self.check_read_borrows(roots, e)
             self.add_borrow(roots, False, e, temp=False)
         else:
             self.use(scrut)
@@ -3363,7 +3403,7 @@ class BorrowChecker:
                     self.err(f"cannot assign to immutable binding '{s.target.name}'", s,
                              "declare it with `var` instead of `let`")
                 self.check_no_borrows({s.target.name}, s, "assign to")
-                self.use(s.value)
+                self.use(s.value, consume=(s.op == "="))
                 bv.moved = False
                 bv.uninit = False
                 bv.moved_paths.clear()
@@ -3371,11 +3411,14 @@ class BorrowChecker:
                 roots = self.place_roots(s.target.base, s)
                 self.require_mutable_roots(roots, s, "assign to")
                 self.check_no_borrows(roots, s, "assign through")
-                self.use(s.value)
+                self.use(s.value, consume=(s.op == "="))
                 path = self.place_path(s.target)
                 if path is not None and path[1]:
                     bv = self.lookup(path[0])
                     if bv is not None:
+                        if bv.moved or bv.uninit:
+                            self.err(f"cannot assign into moved value `{path[0]}`", s,
+                                     "the owner was consumed by the value being assigned")
                         parent = [p for p in bv.moved_paths
                                   if len(p) < len(path[1])
                                   and path[1][:len(p)] == p]
@@ -3393,7 +3436,9 @@ class BorrowChecker:
                 self.require_mutable_roots(roots, s, "assign to")
                 self.check_no_borrows(roots, s, "assign through")
                 self.use(s.target.index)
-                self.use(s.value)
+                self.use(s.value, consume=(s.op == "="))
+                # The value may have consumed the list being assigned into.
+                self.place_roots(s.target.base, s)
             elif isinstance(s.target, ast.Deref):
                 t = self.m.u.resolve_deep(s.target.base.ty)
                 if isinstance(t, TCon) and t.name == "Rc":
@@ -3408,7 +3453,9 @@ class BorrowChecker:
                 ignore = self.ref_borrow_of(s.target.base)
                 self.check_no_borrows(roots, s, "assign through", ignore=ignore)
                 self.use(s.target.base, consume=False)
-                self.use(s.value)
+                self.use(s.value, consume=(s.op == "="))
+                # Re-check the pointee owner after evaluating the value.
+                self.place_roots(s.target.base, s)
             elif isinstance(s.target, ast.Ref):
                 self.err("cannot assign to a reference expression", s)
             else:
@@ -3445,14 +3492,19 @@ class BorrowChecker:
 
         elif isinstance(s, ast.While):
             mark = len(self.borrows)
-            self.use(s.cond)
-            self.clear_temps(mark)
-            snap = self.snapshot()
-            self.restore(snap)
-            self.loop_guard(lambda: self.check_block(s.body))
+            start = self.snapshot()
+
+            def step():
+                self.use(s.cond)
+                self.clear_temps(mark)
+                self.check_block(s.body)
+
+            # The condition also runs on every iteration: a move there is just
+            # as invalid as one in the body.
+            self.loop_guard(step)
             end = self.snapshot()
-            self.restore(snap)
-            self.merge([snap, end])
+            self.restore(start)
+            self.merge([start, end])
 
         elif isinstance(s, ast.For):
             self.check_for(s)
@@ -3530,6 +3582,8 @@ class BorrowChecker:
             mut = it.mut
             if mut:
                 self.check_mut_borrow(roots, s)
+            else:
+                self.check_read_borrows(roots, s)
             borrow = Borrow(set(roots), mut, self.blocks[-1],
                             getattr(s, "line", 0), True)
             self.borrows.append(borrow)

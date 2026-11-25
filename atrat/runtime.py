@@ -120,6 +120,27 @@ static inline int atr_str_eq(AtrStr a, AtrStr b) {
     return memcmp(a.ptr, b.ptr, a.len) == 0;
 }
 
+static inline int atr_str_starts_with(AtrStr a, AtrStr prefix) {
+    if (prefix.len > a.len) return 0;
+    if (prefix.len == 0) return 1;
+    return memcmp(a.ptr, prefix.ptr, prefix.len) == 0;
+}
+
+static inline int atr_str_ends_with(AtrStr a, AtrStr suffix) {
+    if (suffix.len > a.len) return 0;
+    if (suffix.len == 0) return 1;
+    return memcmp(a.ptr + (a.len - suffix.len), suffix.ptr, suffix.len) == 0;
+}
+
+static inline int atr_str_contains(AtrStr a, AtrStr needle) {
+    if (needle.len == 0) return 1;
+    if (needle.len > a.len) return 0;
+    for (size_t i = 0; i + needle.len <= a.len; i++) {
+        if (memcmp(a.ptr + i, needle.ptr, needle.len) == 0) return 1;
+    }
+    return 0;
+}
+
 static inline int atr_str_cmp(AtrStr a, AtrStr b) {
     size_t n = a.len < b.len ? a.len : b.len;
     int c = n ? memcmp(a.ptr, b.ptr, n) : 0;

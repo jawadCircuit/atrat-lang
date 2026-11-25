@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.8.13 — ownership fixes, condition codegen and string search
+
+- Binary operators now borrow their operands. `let b = a + "!"` no longer
+  consumes `a`, matching the documented value semantics of concatenation and
+  comparison.
+- `box(x)` and `rc(x)` transfer ownership of their payload just like `drop(x)`;
+  using the source afterwards is now a borrow error instead of an aliased
+  owner.
+- Fix `Result.ok()`/`Result.err()` payload tracking on borrowed receivers. The
+  wrong payload type was checked, so `(&r).ok()` could move a live field and
+  corrupt the heap; it is now rejected for non-`Copy` payloads.
+- Add missing shared-borrow checks for concrete, trait, `dyn`, enum, string and
+  list methods, shared `match` scrutinies and `for x in &list`. A shared call
+  can no longer run while the same owner is mutably borrowed.
+- Reject borrows and assignments rooted in temporaries (`&make().field`,
+  `&[1, 2][0]`). Previously these produced dangling references at runtime; bind
+  the owner or use a stable place instead.
+- Fix receiver adaptation for methods called through `&T`/`&mut T`: the C
+  pointer is passed through directly instead of being dereferenced and
+  re-addressed. `let m = &mut s; m.get()` now compiles and runs.
+- Evaluate field and indexed assignment values before dropping the old target,
+  so `p.s = p.s + "!"` and self-assignment preserve the live value. Compound
+  assignments borrow the right side, materialise an index once and cache the
+  target address.
+- Correct conditional code generation. `if`/`elif`/`while` conditions are
+  evaluated exactly once per test; condition temporaries are dropped before
+  entering a branch, `elif` chains no longer reference out-of-scope temporaries,
+  and `while` re-evaluates side effects on every iteration. Moves in a `while`
+  condition are rejected like moves in the body.
+- Evaluate `min`, `max` and integer `abs` arguments once using a temporary;
+  calls with side effects no longer run twice.
+- Fix `Rc` methods called through a reference (`(&a).clone()`), including
+  `strong_count`, which previously generated invalid C.
+- The lexer now rejects misplaced or doubled numeric separators (`1__2`, `1_`,
+  `0x_1`), malformed exponents and surrogate `\uD800`–`\uDFFF` escapes. Also
+  fixes a decimal `0` at end-of-file being treated as a hex prefix.
+- New string methods: `starts_with`, `ends_with` and `contains`, available on
+  both `str` and `String` and accepting either.
+- **169/169 language tests** (80 run, 67 compile-fail, 10 panic-path, 12
+  multi-file), plus the interface and sanitizer suites.
+
 ## 0.8.12 — stable module interfaces and build graph
 
 - Give every module a stable project-relative ID derived from its source path

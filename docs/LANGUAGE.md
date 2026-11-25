@@ -527,7 +527,8 @@ unsafe:
 | `box(x)` | allocate a `Box<T>` on the heap |
 
 List methods: `len`, `is_empty`, `push`, `pop`, `get`, `set`, `clear`.
-`str`/`String` methods: `len`, `is_empty`, `clone`.
+`str`/`String` methods: `len`, `is_empty`, `clone`, `starts_with`, `ends_with`,
+`contains`.
 
 `Option<T>` methods: `is_some`, `is_none`, `unwrap`, `expect(msg)`,
 `unwrap_or(default)`, `ok_or(err)`.

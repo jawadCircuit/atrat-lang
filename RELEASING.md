@@ -8,7 +8,7 @@ production-ready**; every public release must say so.
 - Compiler version lives in `atrat/version.py`.
 - Package version lives in `pyproject.toml`.
 - Both must match, and `CHANGELOG.md` needs an entry.
-- Alpha tags use `v0.8.12-alpha`; package versions use `0.8.12`.
+- Alpha tags use `v0.8.13-alpha`; package versions use `0.8.13`.
 
 Check:
 
@@ -28,7 +28,7 @@ the URLs in `README.md` and `pyproject.toml`.
 python -m pip install --upgrade build twine
 python -m build
 python -m twine check dist/*
-python -m pip install --force-reinstall dist/atrat_lang-0.8.12-py3-none-any.whl
+python -m pip install --force-reinstall dist/atrat_lang-0.8.13-py3-none-any.whl
 atrc --version
 ```
 
@@ -50,19 +50,19 @@ gh repo create atrat-lang --public --source=. --remote=origin --push
 
 ```bash
 git add .
-git commit -m "Atrat 0.8.12-alpha"
+git commit -m "Atrat 0.8.13-alpha"
 git branch -M main
-git tag -a v0.8.12-alpha -m "Atrat 0.8.12-alpha"
+git tag -a v0.8.13-alpha -m "Atrat 0.8.13-alpha"
 git push -u origin main
-git push origin v0.8.12-alpha
+git push origin v0.8.13-alpha
 ```
 
 ## 6. Create the GitHub Release
 
 ```bash
-gh release create v0.8.12-alpha \
+gh release create v0.8.13-alpha \
   dist/* \
-  --title "Atrat 0.8.12-alpha" \
+  --title "Atrat 0.8.13-alpha" \
   --prerelease \
   --notes-file release-notes.md
 ```
@@ -72,7 +72,7 @@ sdist, and tick **This is a pre-release**.
 
 Use wording like this, and keep the limitations in:
 
-> Atrat 0.8.12-alpha is a working compiler for experiments and prototypes.
+> Atrat 0.8.13-alpha is a working compiler for experiments and prototypes.
 > It is not production-ready: lifetimes are conservative, non-Copy closures
 > cannot be captured, modules have aliases and qualified names but no
 > separate compilation or per-field visibility, and there is no threading or
