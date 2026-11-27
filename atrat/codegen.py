@@ -1451,15 +1451,36 @@ static inline void atr_list_{key}_free({cname}* self) {{
             endv = self.temp("end")
             cvar = f"v_{s.name}_{self.temp_n}"
             self.temp_n += 1
-            op = "<=" if it.inclusive else "<"
             out.append(f"{pad}{{")
             out.append(f"{pad}    {elem_c} {startv} = {start};")
             out.append(f"{pad}    {elem_c} {endv} = {end};")
-            out.append(f"{pad}    for ({elem_c} {cvar} = {startv}; "
-                       f"{cvar} {op} {endv}; {cvar}++) {{")
+            if it.inclusive:
+                # `i <= max` then `i++` wraps to the minimum on the last
+                # iteration, so an inclusive range at the type's maximum
+                # would loop forever.  Count iterations in an unsigned
+                # counter and derive the element instead; this also keeps
+                # `continue` working because the counter is incremented by
+                # the for statement itself.
+                cnt = self.temp("n")
+                idx = self.temp("k")
+                full = self.temp("full")
+                out.append(
+                    f"{pad}    uint64_t {cnt} = ({startv} > {endv}) ? 0 : "
+                    f"((uint64_t){endv} - (uint64_t){startv} + 1);")
+                out.append(
+                    f"{pad}    bool {full} = ({cnt} == 0 && !({startv} > {endv}));")
+                out.append(
+                    f"{pad}    for (uint64_t {idx} = 0; {full} || {idx} < {cnt}; {idx}++) {{")
+            else:
+                out.append(f"{pad}    for ({elem_c} {cvar} = {startv}; "
+                           f"{cvar} < {endv}; {cvar}++) {{")
             self.var_scopes.append({})
             self.drop_scopes.append([])
             self.var_scopes[-1][s.name] = (cvar, elem_t, False)
+            if it.inclusive:
+                out.append(
+                    f"{pad}        {elem_c} {cvar} = "
+                    f"({elem_c})((uint64_t){startv} + {idx});")
             # The loop body scope is the current top; break/continue must drop
             # it and any nested scopes, so record its index (not len).
             self.loop_stack.append(len(self.drop_scopes) - 1)
@@ -1755,11 +1776,51 @@ static inline void atr_list_{key}_free({cname}* self) {{
             return f"(&({self.emit_expr(e, consume=False)}))"
         return None
 
+    def emit_short_circuit(self, e) -> str:
+        """Evaluate `&&`/`||` operands lazily, with per-side temporaries.
+
+        The C expression form cannot encode lazy evaluation, so the left side
+        is materialised first and the right side's temporaries and drops are
+        emitted inside the conditional branch.  Right-side temporaries are
+        owned by that branch and released there, not at statement end.
+        """
+        mark = len(self.pre)
+        left = self.emit_expr(e.left, consume=False)
+        left_pre = self.pre[mark:]
+        del self.pre[mark:]
+        left_pending = list(self.pending)
+        del self.pending[:]
+
+        self.drop_scopes.append([])
+        rmark = len(self.pre)
+        right = self.emit_expr(e.right, consume=False)
+        right_pre = self.pre[rmark:]
+        del self.pre[rmark:]
+        right_pending = list(self.pending)
+        del self.pending[:]
+        self.drop_scopes.pop()
+
+        self.pre.extend(left_pre)
+        self.pending.extend(left_pending)
+        out = self.temp("sc")
+        rt = self.temp("scr")
+        body = list(right_pre)
+        body.append(f"bool {rt} = {right};")
+        body.extend(right_pending)
+        body.append(f"{out} = {rt};")
+        self.pre.append(f"bool {out} = {left};")
+        cond = out if e.op == "&&" else f"!{out}"
+        self.pre.append(f"if ({cond}) {{ " + " ".join(body) + " }")
+        return out
+
     def emit_binary(self, e) -> str:
         op = e.op
         lt = self.concrete(e.left.ty)
         rt = self.concrete(e.right.ty)
         res = self.concrete(e.ty)
+
+        if op in ("&&", "||"):
+            return self.emit_short_circuit(e)
 
         if op == "+" and (_stringy(lt) or _stringy(rt)):
             return self.view_expr(

@@ -27,7 +27,15 @@ PRELUDE = os.path.join(HERE, "prelude.atr")
 def read_source(path: str) -> tuple[str, str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return f.read(), path
+            text = f.read()
+        # Windows editors commonly save a UTF-8 BOM; it is metadata, not source.
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        return text, path
+    except UnicodeDecodeError:
+        raise SystemExit(
+            f"atrc: cannot read {path}: source is not valid UTF-8 "
+            f"(save the file as UTF-8, not UTF-16 or a legacy code page)")
     except OSError as e:
         raise SystemExit(f"atrc: cannot read {path}: {e.strerror}")
 
@@ -69,7 +77,14 @@ def _register(path: str, text: str) -> int:
 
 
 def _parse_with_offset(path: str, text: str, start: int):
-    toks = tokenize(text, path)
+    try:
+        toks = tokenize(text, path)
+    except AtratError as e:
+        # Lexer positions are file-local; shift them into the merged source
+        # map so diagnostics point at the file being parsed, not the prelude.
+        if e.line:
+            e.line += start - 1
+        raise
     for t in toks:
         t.line += start - 1
     prog = Parser(toks, path, text).parse_program()

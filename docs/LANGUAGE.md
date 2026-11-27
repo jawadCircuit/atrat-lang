@@ -25,6 +25,9 @@ let who = "world"
 print("hello {who}, 1 + 2 = {1 + 2}, braces = {{ok}}")
 ```
 
+Inside `{...}` the expression is lexed as source. A nested string literal
+uses plain quotes, not outer-string escapes: `"v={"x"}"`.
+
 ## 2. Types
 
 | Type | Meaning |
@@ -49,7 +52,8 @@ print("hello {who}, 1 + 2 = {1 + 2}, braces = {{ok}}")
 
 Integer and float literals get a fresh constrained type variable and default to
 `i64` / `f64` when unconstrained. A literal integer may flow into any numeric
-type, including a float type (`let x: f64 = 1`).
+type, including a float type (`let x: f64 = 1`). A cast on a bare literal uses
+that default representation (`0 as u8`, `1.5 as i64`).
 
 `Copy` types: all primitives, `str`, references, pointers, function pointers,
 and structs/enums whose fields are all `Copy`. Everything else is move-only:
@@ -154,8 +158,9 @@ fn first_or<T>(xs: &List<T>, fallback: T) -> T:
 
 - Type arguments are inferred at the call site.
 - Each concrete instantiation becomes a distinct C function/struct/enum.
-- Recursion through `List<T>` is fine (heap indirection); a struct containing
-  itself by value would be an infinite type and fails in C.
+- Recursion through `List<T>`, `Box<T>`, `Rc<T>`, references or pointers is
+  fine (indirection). A struct or enum containing itself by value is rejected
+  with an "infinite size" type error.
 - Generic `impl` blocks are not supported yet; put type parameters on methods.
 
 Trait bounds constrain a generic argument:

@@ -1563,9 +1563,121 @@ fn main() -> i32:
 """,
         "i" + chr(10) + "12" + chr(10),
     ),
+    (
+        "short-circuit-lazy",
+        """
+struct P:
+    n: i64
+
+fn make() -> P:
+    print("BAD")
+    return P { n: 1 }
+
+fn main() -> i32:
+    print(false && make().n > 0)
+    print(true || make().n > 0)
+    if false && make().n > 0:
+        print("unreachable")
+    var i = 0
+    while i < 1 && make().n > 0:
+        i += 1
+    print("DONE")
+    return 0
+""",
+        "false" + chr(10) + "true" + chr(10) + "BAD" + chr(10) + "DONE" + chr(10),
+    ),
+    (
+        "inclusive-range-max",
+        """
+fn main() -> i32:
+    let lo: u8 = 0
+    let hi: u8 = 255
+    var n = 0
+    for i in lo..=hi:
+        n += 1
+        if n > 300:
+            break
+    print(n)
+    var odd = 0
+    for i in lo..=hi:
+        if i % 2 == 0:
+            continue
+        odd += 1
+    print(odd)
+    let ilo: i8 = -128
+    let ihi: i8 = 127
+    var signed = 0
+    for i in ilo..=ihi:
+        signed += 1
+    print(signed)
+    return 0
+""",
+        "256" + chr(10) + "128" + chr(10) + "256" + chr(10),
+    ),
+    (
+        "cast-numeric-literals",
+        """
+fn main() -> i32:
+    let a = 0 as u8
+    let b = 1.5 as i64
+    let c = 65 as u8
+    print(a)
+    print(b)
+    print(c)
+    return 0
+""",
+        "0" + chr(10) + "1" + chr(10) + "65" + chr(10),
+    ),
+    (
+        "utf8-bom",
+        "\ufefffn main() -> i32:\n    print(\"ok\")\n    return 0\n",
+        "ok" + chr(10),
+    ),
 ]
 
 FAIL_CASES = [
+    (
+        "float-literal-out-of-range",
+        'fn main() -> i32:\n    let x = 1e400\n    return 0\n',
+        "lex error",
+        "float literal is out of range",
+    ),
+    (
+        "integer-literal-out-of-range",
+        'fn main() -> i32:\n    let x = 18446744073709551616\n    return 0\n',
+        "lex error",
+        "integer literal is out of range for u64",
+    ),
+    (
+        "recursive-type-infinite",
+        'struct Node:\n    next: Option<Node>\n\nfn main() -> i32:\n    let n: Node\n    return 0\n',
+        "type error",
+        "infinite size",
+    ),
+    (
+        "duplicate-field",
+        'struct S:\n    x: i64\n    x: i64\n\nfn main() -> i32:\n    let s = S { x: 1 }\n    return 0\n',
+        "type error",
+        "duplicate field 'S.x'",
+    ),
+    (
+        "duplicate-enum-variant",
+        'enum E:\n    A\n    A\n\nfn main() -> i32:\n    let e = E.A\n    return 0\n',
+        "type error",
+        "duplicate variant 'E.A'",
+    ),
+    (
+        "duplicate-generic-parameter",
+        'struct S<T, T>:\n    x: T\n\nfn main() -> i32:\n    let s = S { x: 1 }\n    return 0\n',
+        "type error",
+        "duplicate generic parameter 'T'",
+    ),
+    (
+        "duplicate-trait-parameter",
+        'trait T:\n    fn f(&self, x: i64, x: i64) -> i64\n\nfn main() -> i32:\n    return 0\n',
+        "type error",
+        "duplicate parameter 'x'",
+    ),
     (
         "partial-init-field",
         'struct P:\n    a: String\n    b: String\n\nfn main() -> i32:\n    var p: P\n    p.a = "x".clone()\n    p.b = "y".clone()\n    print(p.a)\n    return 0\n',

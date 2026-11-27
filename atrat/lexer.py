@@ -1,5 +1,6 @@
 """Lexer for Atrat: indentation-sensitive, Python-flavoured surface syntax."""
 from __future__ import annotations
+import math
 from dataclasses import dataclass, field
 
 
@@ -302,23 +303,31 @@ class Lexer:
             raise self.error(f"malformed {what} literal")
         return self.src[start:self.i].replace("_", "")
 
+    def _checked_int(self, raw: str, base: int, line: int, col: int) -> int:
+        value = int(raw, base)
+        if value > 0xFFFF_FFFF_FFFF_FFFF:
+            raise LexError(
+                "integer literal is out of range for u64", line, col,
+                "the largest supported literal is 18446744073709551615")
+        return value
+
     def _number(self) -> None:
         line, col = self.line, self.col
         if self.peek() == "0" and self.peek(1) != "" and self.peek(1) in "xX":
             self.advance(2)
             raw = self._digits(lambda c: c in "0123456789abcdefABCDEF",
                                "hexadecimal")
-            self.emit("INT", int(raw, 16), line, col)
+            self.emit("INT", self._checked_int(raw, 16, line, col), line, col)
             return
         if self.peek() == "0" and self.peek(1) != "" and self.peek(1) in "bB":
             self.advance(2)
             raw = self._digits(lambda c: c in "01", "binary")
-            self.emit("INT", int(raw, 2), line, col)
+            self.emit("INT", self._checked_int(raw, 2, line, col), line, col)
             return
         if self.peek() == "0" and self.peek(1) != "" and self.peek(1) in "oO":
             self.advance(2)
             raw = self._digits(lambda c: c in "01234567", "octal")
-            self.emit("INT", int(raw, 8), line, col)
+            self.emit("INT", self._checked_int(raw, 8, line, col), line, col)
             return
 
         raw = self._digits(lambda c: c in "0123456789", "decimal")
@@ -345,9 +354,14 @@ class Lexer:
                                    allow_sep=False)
                 raw += "e" + sign + exp
         if is_float:
-            self.emit("FLOAT", float(raw), line, col)
+            value = float(raw)
+            if not math.isfinite(value):
+                raise LexError(
+                    "float literal is out of range", line, col,
+                    "use a finite value (the IEEE-754 double range is about 1.8e308)")
+            self.emit("FLOAT", value, line, col)
         else:
-            self.emit("INT", int(raw), line, col)
+            self.emit("INT", self._checked_int(raw, 10, line, col), line, col)
 
     # -- literals ---------------------------------------------------------
     def _char(self) -> None:
@@ -450,7 +464,9 @@ class Lexer:
                             break
                     self.advance()
                 if depth != 0:
-                    raise self.error("unclosed '{' in string interpolation")
+                    raise LexError(
+                        "unclosed '{' in string interpolation", eline, ecol,
+                        "quotes inside `{...}` are written without backslashes")
                 expr_src = self.src[start:self.i]
                 self.advance()  # closing }
                 if not expr_src.strip():

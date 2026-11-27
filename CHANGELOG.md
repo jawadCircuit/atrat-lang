@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.14 — lazy boolean operators, ranges and type-layout checks
+
+- `&&` and `||` now really short-circuit. The right operand's temporaries,
+  calls and drops are emitted inside the conditional branch instead of running
+  eagerly, so `false && make().n > 0` no longer calls `make`.
+- Fix inclusive ranges at the element type's maximum. `for i in 0..=255` over
+  `u8` (and `i8` `-128..=127`, etc.) no longer wraps and loops forever;
+  iteration counting also preserves `break` and `continue`.
+- Allow numeric literal casts such as `0 as u8` and `1.5 as i64`. Bare
+  literals now use their default source type instead of being rejected as an
+  unresolved type variable.
+- Reject floating-point literals outside the finite IEEE-754 range
+  (`1e400`) and integer literals larger than `u64`, with a proper lex error
+  instead of emitting invalid C.
+- Reject infinitely sized recursive types such as `struct Node: next: Node`
+  or `enum E: A(E)`. Cycles through `Box`, `Rc`, `List`, references and raw
+  pointers remain valid. This turns a C compile failure into a type diagnostic.
+- Fix source attribution for lexer errors in imported/root files; diagnostics
+  no longer point at an unrelated line in the prelude.
+- Reject duplicate struct fields, enum variants, generic parameters, trait
+  parameters and impl generics at check time. Some previously reached C as
+  duplicate members or internal unresolved-type errors.
+- Accept UTF-8 BOM-prefixed source files, as written by common Windows editors,
+  and report non-UTF-8 files (for example UTF-16 saves) instead of a traceback.
+- **180/180 language tests** (84 run, 74 compile-fail, 10 panic-path, 12
+  multi-file), plus the interface, sanitizer, fuzz and matrix suites.
+
 ## 0.8.13 — ownership fixes, condition codegen and string search
 
 - Binary operators now borrow their operands. `let b = a + "!"` no longer

@@ -227,6 +227,15 @@ class Module:
         return None
 
 
+def _check_generic_names(names: list, owner: str, node) -> None:
+    seen = set()
+    for name in names:
+        if name in seen:
+            raise TypeError_(f"duplicate generic parameter '{name}' in {owner}",
+                             getattr(node, "line", 0), getattr(node, "col", 0))
+        seen.add(name)
+
+
 def collect(prog: ast.Program) -> Module:
     m = Module()
     m.program = prog
@@ -290,6 +299,7 @@ def collect(prog: ast.Program) -> Module:
     # Pass 1: type names must exist before fields refer to them.
     for d in prog.decls:
         if isinstance(d, ast.StructDecl):
+            _check_generic_names(d.generics, f"type '{d.name}'", d)
             if d.name in m.structs or d.name in m.enums:
                 raise TypeError_(f"type '{d.name}' is defined twice", d.line, d.col)
             m.structs[d.name] = StructInfo(
@@ -297,6 +307,7 @@ def collect(prog: ast.Program) -> Module:
                 source=getattr(d, "source", ""),
                 public=getattr(d, "is_public", False))
         elif isinstance(d, ast.EnumDecl):
+            _check_generic_names(d.generics, f"type '{d.name}'", d)
             if d.name in m.structs or d.name in m.enums:
                 raise TypeError_(f"type '{d.name}' is defined twice", d.line, d.col)
             m.enums[d.name] = EnumInfo(
@@ -304,6 +315,7 @@ def collect(prog: ast.Program) -> Module:
                 source=getattr(d, "source", ""),
                 public=getattr(d, "is_public", False))
         elif isinstance(d, ast.TraitDecl):
+            _check_generic_names(d.generics, f"trait '{d.name}'", d)
             if d.name in m.traits:
                 raise TypeError_(f"trait '{d.name}' is defined twice", d.line, d.col)
             m.traits[d.name] = TraitInfo(
@@ -317,7 +329,13 @@ def collect(prog: ast.Program) -> Module:
         if isinstance(d, ast.StructDecl):
             gvars = {g: u.fresh(hint=g) for g in d.generics}
             fields = []
+            seen_fields = set()
             for fname, fty in d.fields:
+                if fname in seen_fields:
+                    raise TypeError_(f"duplicate field '{d.name}.{fname}'",
+                                     getattr(fty, "line", d.line),
+                                     getattr(fty, "col", d.col))
+                seen_fields.add(fname)
                 # References are allowed in structs, but conservatively: a value
                 # holding one keeps its source borrowed for the whole block and
                 # cannot be returned or rebound.
@@ -331,7 +349,12 @@ def collect(prog: ast.Program) -> Module:
         elif isinstance(d, ast.EnumDecl):
             gvars = {g: u.fresh(hint=g) for g in d.generics}
             variants = []
+            seen_variants = set()
             for vname, vtys in d.variants:
+                if vname in seen_variants:
+                    raise TypeError_(f"duplicate variant '{d.name}.{vname}'",
+                                     d.line, d.col)
+                seen_variants.add(vname)
                 types = []
                 for vt in vtys:
                     t = ty(vt, gvars, f"enum {d.name}")
@@ -388,6 +411,11 @@ def collect(prog: ast.Program) -> Module:
                 self_var = u.fresh(hint="Self")
                 trait_gvars = dict(gvars)
                 trait_gvars["Self"] = self_var
+                seen_params = set()
+                for p in fn.params:
+                    if p.name in seen_params:
+                        raise TypeError_(f"duplicate parameter '{p.name}'", p.line, p.col)
+                    seen_params.add(p.name)
                 params = []
                 for i, p in enumerate(fn.params):
                     if p.name == "self":
@@ -401,6 +429,8 @@ def collect(prog: ast.Program) -> Module:
                             pty = TRef(p.mode == "&mut", pty)
                     params.append(pty)
                 ret = ty(fn.ret, trait_gvars, f"trait {d.name}") if fn.ret is not None else UNIT
+                _check_generic_names(fn.generics,
+                                     f"trait method '{d.name}.{fn.name}'", fn)
                 scheme_vars = [self_var.id] + [v.id for v in gvars.values()]
                 m.traits[d.name].methods[fn.name] = FnInfo(
                     decl=fn, name=fn.name, generics=list(fn.generics),
@@ -424,6 +454,7 @@ def collect(prog: ast.Program) -> Module:
                 raise TypeError_(f"cannot implement methods on unknown type '{owner}'",
                                  d.line, d.col)
             impl_generics = list(d.generics)
+            _check_generic_names(impl_generics, f"impl for '{owner}'", d)
             if impl_generics:
                 sinfo = m.structs.get(owner) or m.enums.get(owner)
                 if sinfo is None or len(sinfo.generics) != len(impl_generics):
@@ -618,7 +649,63 @@ def collect(prog: ast.Program) -> Module:
         for vname, vtys in einfo.variants:
             check_names(f"variant '{einfo.name}.{vname}'", einfo, vtys)
 
+    _check_recursive_types(m)
     return m
+
+
+def _check_recursive_types(m: Module) -> None:
+    """Reject by-value type cycles that C cannot lay out.
+
+    A struct or enum that stores itself inline has infinite size.  Pointers
+    (`Box`, `Rc`, `List`, references and raw pointers) break the cycle and
+    are accepted.  The walk substitutes generic arguments and keeps a stack of
+    concrete instantiations, so mutual recursion and cycles such as
+    `struct B: next: A<B>` are caught too.  A depth budget catches cycles whose
+    arguments grow on every expansion.
+    """
+
+    def visit(t, root: str, decl, stack: set, depth: int) -> None:
+        if depth > 128:
+            raise TypeError_(
+                f"type '{m.display_name(root)}' has infinite size",
+                getattr(decl, "line", 0), getattr(decl, "col", 0),
+                "break the cycle with `Box`, `Rc`, or `List`")
+        t = m.u.resolve_deep(t)
+        if isinstance(t, TVar):
+            return
+        if isinstance(t, (TRef, TPtr, TFn)):
+            return
+        if not isinstance(t, TCon):
+            return
+        if t.name in PRIMS or t.name in ("Box", "Rc", "List", "dyn"):
+            return
+        info = m.structs.get(t.name)
+        enum = False
+        if info is None:
+            info = m.enums.get(t.name)
+            enum = info is not None
+        if info is None:
+            return
+        key = (t.name, tuple(a.show() for a in t.args))
+        if key in stack:
+            raise TypeError_(
+                f"type '{m.display_name(root)}' has infinite size",
+                getattr(decl, "line", 0), getattr(decl, "col", 0),
+                "break the cycle with `Box`, `Rc`, or `List`")
+        stack.add(key)
+        mapping = dict(zip(info.generics, t.args))
+        if enum:
+            for _, vtys in info.variants:
+                for vt in vtys:
+                    visit(subst(vt, mapping), root, decl, stack, depth + 1)
+        else:
+            for _, ft in info.fields:
+                visit(subst(ft, mapping), root, decl, stack, depth + 1)
+        stack.remove(key)
+
+    for name, info in list(m.structs.items()) + list(m.enums.items()):
+        args = [m.u.fresh(hint=g) for g in info.generics]
+        visit(TCon(name, args), name, info.decl, set(), 0)
 
 
 def _contains_ref(t) -> bool:
@@ -723,6 +810,7 @@ def _dyn_by_value(m: Module, t) -> bool:
 def _fn_info(m: Module, d: ast.FnDecl, ty, owner, self_mode,
              impl_generics=None) -> FnInfo:
     u = m.u
+    _check_generic_names(d.generics, f"function '{d.name}'", d)
     for g, bounds in getattr(d, "bounds", {}).items():
         for trait in bounds:
             if trait not in m.traits:
@@ -1586,6 +1674,10 @@ class FnChecker:
         s = self.u.resolve_deep(src)
         t = self.u.resolve_deep(target)
         if is_numeric(s) and is_numeric(t):
+            return
+        # A bare numeric literal has an unresolved constrained type variable;
+        # casting it should use its default (i64/f64) source representation.
+        if isinstance(s, TVar) and (s.cons & {"int", "float"}) and is_numeric(t):
             return
         if isinstance(s, TCon) and s.name == "bool" and is_numeric(t):
             return

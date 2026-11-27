@@ -21,13 +21,29 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection, enforced cross-file `pub`, module aliases/qualified names, stable project-relative module IDs, deterministic JSON interfaces and a dependency graph; no per-field `pub`, object cache, separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 169 language cases incl. 67 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 180 language cases incl. 74 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## What 0.8.14 added
+
+- Make `&&` and `||` lazy: right-hand calls, temporaries and drops run only
+  when the left operand does not decide the result.
+- Fix inclusive ranges at the element type's maximum (`u8` `0..=255`,
+  `i8` `-128..=127`) so they no longer wrap and loop forever.
+- Allow casts on bare numeric literals (`0 as u8`, `1.5 as i64`).
+- Reject out-of-range integer and non-finite float literals at lex time.
+- Reject infinitely sized recursive types, and duplicate struct fields, enum
+  variants, generic parameters, trait parameters and impl generics, at
+  type-check time.
+- Attribute lexer diagnostics to the file being parsed rather than the prelude,
+  accept UTF-8 BOM-prefixed sources, and reject non-UTF-8 files cleanly.
+- **180/180 language tests** (84 run, 74 compile-fail, 10 panic-path, 12
+  multi-file), plus interface, validation-matrix, fuzz and sanitizer suites.
 
 ## What 0.8.13 added
 
