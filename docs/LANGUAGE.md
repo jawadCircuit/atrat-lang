@@ -161,7 +161,9 @@ fn first_or<T>(xs: &List<T>, fallback: T) -> T:
 - Recursion through `List<T>`, `Box<T>`, `Rc<T>`, references or pointers is
   fine (indirection). A struct or enum containing itself by value is rejected
   with an "infinite size" type error.
-- Generic `impl` blocks are not supported yet; put type parameters on methods.
+- Generic `impl` blocks use `impl<T> Type<T>:` and must repeat the impl type
+  parameters on the target type in order. Specialized impls such as
+  `impl Type<i64>` are not supported.
 
 Trait bounds constrain a generic argument:
 

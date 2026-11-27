@@ -28,6 +28,12 @@ BUILTIN_FNS = {"print", "println", "write", "panic", "assert", "len", "to_str",
                "min", "max", "abs", "sqrt", "exit", "drop",
                "read_file", "write_file", "env", "args", "now_ms", "box", "rc"}
 
+# Names that already mean a type in every scope.  A declaration or generic
+# parameter using one of these silently shadowed the builtin and could produce
+# dead code or invalid C.
+RESERVED_TYPE_NAMES = PRIMS | set(TYPE_ALIASES) | {"List", "Box", "Rc", "Self"}
+RESERVED_GENERIC_NAMES = RESERVED_TYPE_NAMES | {"Option", "Result"}
+
 LIST_METHODS = {"len", "is_empty", "push", "pop", "get", "set", "clear"}
 
 
@@ -230,6 +236,16 @@ class Module:
 def _check_generic_names(names: list, owner: str, node) -> None:
     seen = set()
     for name in names:
+        if name == "Self":
+            raise TypeError_(
+                "generic parameter 'Self' is reserved",
+                getattr(node, "line", 0), getattr(node, "col", 0),
+                "`Self` names the implementing type; choose another parameter name")
+        if name in RESERVED_GENERIC_NAMES:
+            raise TypeError_(
+                f"generic parameter '{name}' shadows the built-in type",
+                getattr(node, "line", 0), getattr(node, "col", 0),
+                f"rename the parameter in {owner}, for example to `T`")
         if name in seen:
             raise TypeError_(f"duplicate generic parameter '{name}' in {owner}",
                              getattr(node, "line", 0), getattr(node, "col", 0))
@@ -300,6 +316,10 @@ def collect(prog: ast.Program) -> Module:
     for d in prog.decls:
         if isinstance(d, ast.StructDecl):
             _check_generic_names(d.generics, f"type '{d.name}'", d)
+            if d.name in RESERVED_TYPE_NAMES:
+                raise TypeError_(
+                    f"type name '{d.name}' is reserved for a built-in type",
+                    d.line, d.col, "choose a different type name")
             if d.name in m.structs or d.name in m.enums:
                 raise TypeError_(f"type '{d.name}' is defined twice", d.line, d.col)
             m.structs[d.name] = StructInfo(
@@ -308,6 +328,10 @@ def collect(prog: ast.Program) -> Module:
                 public=getattr(d, "is_public", False))
         elif isinstance(d, ast.EnumDecl):
             _check_generic_names(d.generics, f"type '{d.name}'", d)
+            if d.name in RESERVED_TYPE_NAMES:
+                raise TypeError_(
+                    f"type name '{d.name}' is reserved for a built-in type",
+                    d.line, d.col, "choose a different type name")
             if d.name in m.structs or d.name in m.enums:
                 raise TypeError_(f"type '{d.name}' is defined twice", d.line, d.col)
             m.enums[d.name] = EnumInfo(
@@ -443,6 +467,11 @@ def collect(prog: ast.Program) -> Module:
     # Pass 3: functions.
     for d in prog.decls:
         if isinstance(d, ast.FnDecl):
+            if d.name in BUILTIN_FNS:
+                raise TypeError_(
+                    f"function '{d.name}' collides with a built-in function",
+                    d.line, d.col,
+                    "the built-in always wins; rename the function")
             if d.name in m.fns:
                 raise TypeError_(f"function '{d.name}' is defined twice", d.line, d.col)
             m.fns[d.name] = _fn_info(m, d, ty, owner=None, self_mode=None)
@@ -455,14 +484,43 @@ def collect(prog: ast.Program) -> Module:
                                  d.line, d.col)
             impl_generics = list(d.generics)
             _check_generic_names(impl_generics, f"impl for '{owner}'", d)
+            type_args = list(getattr(d, "type_args", []))
+            sinfo = m.structs.get(owner) or m.enums.get(owner)
+            if sinfo is not None and sinfo.generics and not impl_generics:
+                raise TypeError_(
+                    f"generic type '{owner}' requires impl type parameters",
+                    d.line, d.col,
+                    f"write `impl<T> {owner}<T>:` with {len(sinfo.generics)} "
+                    f"type parameter(s)")
             if impl_generics:
-                sinfo = m.structs.get(owner) or m.enums.get(owner)
                 if sinfo is None or len(sinfo.generics) != len(impl_generics):
                     raise TypeError_(
                         f"impl generics {impl_generics} do not match type '{owner}'",
                         d.line, d.col,
                         f"'{owner}' expects {len(getattr(sinfo, 'generics', []))} "
                         f"type parameter(s)")
+                if not type_args:
+                    raise TypeError_(
+                        f"impl for generic type '{owner}' must write its type arguments",
+                        d.line, d.col,
+                        f"write `impl<{', '.join(impl_generics)}> {owner}"
+                        f"<{', '.join(impl_generics)}>:`")
+            if type_args:
+                names = []
+                valid = len(type_args) == len(impl_generics)
+                for arg in type_args if valid else []:
+                    if (not isinstance(arg, ast.TyName) or arg.args
+                            or arg.name not in impl_generics):
+                        valid = False
+                        break
+                    names.append(arg.name)
+                if not valid or names != impl_generics:
+                    raise TypeError_(
+                        f"impl target arguments for '{owner}' must be the impl "
+                        f"type parameters in order",
+                        d.line, d.col,
+                        "specialized impls are not supported; repeat the impl "
+                        "parameters on the target type")
             trait = None
             if d.trait_name is not None:
                 trait = m.traits.get(d.trait_name)

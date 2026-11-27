@@ -21,13 +21,26 @@ remaining blockers are listed with severity and an honest estimate.
 | Standard library | **Minimal** | Prelude, `Option`/`Result` methods, files, env, argv, time, `Box`. No maps, IO streams, JSON, threading, networking. |
 | Modules / packages | **Partial** | Multi-file imports with cycle detection, enforced cross-file `pub`, module aliases/qualified names, stable project-relative module IDs, deterministic JSON interfaces and a dependency graph; no per-field `pub`, object cache, separate compilation or package manager. |
 | Tooling | **Minimal** | CLI, per-file diagnostics, `emit-c`. No formatter, LSP, debugger, REPL, docs generator. |
-| Test suite | **Moderate** | 180 language cases incl. 74 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
+| Test suite | **Moderate** | 187 language cases incl. 81 compile-fail, 10 panic-path and 12 multi-file tests, plus a module-interface/dependency-graph suite; 1,000-case mutation fuzz smoke, ASan/UBSan locally and in CI, optimization/compiler matrix; no large-scale differential campaign. |
 | CI | **Yes** | Linux + Windows, Python 3.10/3.12, warning-free C job. |
 | Performance | **Good** | 1.00x–1.21x of hand-written C on three micro-benchmarks. |
 | Packaging | **Yes** | `pip install .`, `atrc` console script, wheel-ready. |
 | Security process | **Minimal** | `SECURITY.md`; no audit, no threat model beyond safe/unsafe boundary. |
 | Documentation | **Good for alpha** | Language reference, STDLIB, diagnostics, regression reproductions, design notes, readiness audit, examples. |
 | Community / governance | **No** | No maintainer policy or deprecation process; prereleases only. |
+
+## Unreleased
+
+- Parse impl target type arguments instead of discarding them. Specialized
+  impls (`impl Wrap<i64>`, `impl<T> Wrap<i64>`, `impl Show for Wrap<i64>`)
+  are rejected; generic impls must repeat their parameters as
+  `impl<T> Wrap<T>:`. This fixes bogus method lookup and an invalid-C path.
+- Reject generic parameters that shadow built-in types or aliases, and the
+  reserved name `Self`.
+- Reject struct and enum declarations named after built-in types, and free
+  functions colliding with built-ins such as `print` and `drop`.
+- **187/187 language tests** (84 run, 81 compile-fail, 10 panic-path, 12
+  multi-file), plus interface, validation-matrix, fuzz and sanitizer suites.
 
 ## What 0.8.14 added
 
@@ -366,7 +379,7 @@ remaining blockers are listed with severity and an honest estimate.
 | C1 | Traits are missing associated items | Defaults, bounds, supertraits, generic impls, `&dyn` and `Box<dyn>` work; no associated types or trait-level generics. | 2–4 weeks |
 | C2 | Lifetimes are conservative | Returned views are tied to one reference parameter; no explicit lifetime parameters, and views cannot be rebound or escaped through nested closures. | 4–8 weeks |
 | C3 | Module system is a single merged unit | Cross-file `pub`, aliases, qualified names, duplicate names, stable interfaces and a dependency graph work. Still no per-field visibility, object-file compilation, link cache, package boundaries or conditional imports. | 2–4 weeks |
-| C4 | No formal soundness evidence | The checker is hand-written; 154 tests, mutation fuzzing and ASan/UBSan cannot establish absence of unsoundness. | 4+ weeks, ongoing |
+| C4 | No formal soundness evidence | The checker is hand-written; 187 tests, mutation fuzzing and ASan/UBSan cannot establish absence of unsoundness. | 4+ weeks, ongoing |
 | C5 | Single maintainer, no release process | "Production" implies support, deprecation, security response. | ongoing |
 | C6 | Panic is not unwinding or catchable | Live owning locals, parameters and materialised temporaries are destroyed before exit 101, including across nested calls and early control flow. There is no catch/recover; values under construction and user destructor panics remain gaps. | 3–6 weeks for a full panic strategy, more for cross-platform/ABI guarantees |
 
@@ -440,7 +453,7 @@ At part-time effort (roughly 10–15 hours/week), multiply the calendar ranges b
 The largest uncertainty is not the parser or code generator. It is the work that
 turns a compiler into a platform: lifetime/escape semantics, a real standard
 library, module/package boundaries, full panic semantics, tooling, security response,
-and enough external use to find the bugs the current 154 tests cannot.
+and enough external use to find the bugs the current 187 tests cannot.
 
 ## Recommended path
 

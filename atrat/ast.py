@@ -394,6 +394,7 @@ class ImplBlock:
     type_name: str = ""
     trait_name: Optional[str] = None
     generics: list = field(default_factory=list)
+    type_args: list = field(default_factory=list)
     methods: list = field(default_factory=list)
     line: int = 0
     col: int = 0

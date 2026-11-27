@@ -227,6 +227,16 @@ class Parser:
             self.expect_angle()
         return names
 
+    def parse_type_args_opt(self) -> list:
+        args = []
+        if self.eat_op("<"):
+            while True:
+                args.append(self.parse_type())
+                if not self.eat_op(","):
+                    break
+            self.expect_angle()
+        return args
+
     def parse_params(self) -> list[ast.Param]:
         params = []
         self.expect_op("(")
@@ -350,16 +360,19 @@ class Parser:
         self.expect("KW", "impl")
         generics = self.parse_generics_opt()
         first = self.parse_path("type or trait name")
-        # skip generic args on the first name
-        if self.at_op("<"):
-            self.parse_generics_opt()
+        first_args = self.parse_type_args_opt()
         trait_name = None
         tyname = first
+        type_args = first_args
         if self.eat_kw("for"):
             trait_name = first
+            if first_args:
+                raise self.error(
+                    f"trait '{first}' cannot take type arguments",
+                    "traits are not generic yet; put type parameters on the type "
+                    "on the right-hand side")
             tyname = self.parse_path("type name")
-            if self.at_op("<"):
-                self.parse_generics_opt()
+            type_args = self.parse_type_args_opt()
         self.expect_op(":")
         self.expect_newline()
         self.expect("INDENT")
@@ -377,8 +390,8 @@ class Parser:
             methods.append(self.parse_fn())
         self.expect("DEDENT")
         return ast.ImplBlock(type_name=tyname, trait_name=trait_name,
-                             generics=generics, methods=methods,
-                             line=line, col=col)
+                             generics=generics, type_args=type_args,
+                             methods=methods, line=line, col=col)
 
     # -- types ------------------------------------------------------------
     def parse_path(self, what="name"):

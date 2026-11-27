@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — impl targets and reserved names
+
+- Parse type arguments on impl targets instead of silently discarding them.
+  Specialized impls such as `impl Wrap<i64>` and `impl<T> Wrap<i64>` are now
+  rejected; a generic impl must repeat its parameters as `impl<T> Wrap<T>:`.
+  This fixes bogus method lookup and invalid C from `impl Show for Wrap<i64>`.
+- Reject generic parameters that shadow built-in types or type aliases
+  (`i64`, `str`, `List`, `Option`, `int`, ...) and the reserved name
+  `Self`. Previously `fn id<unit>` emitted a non-void C function with a bare
+  `return;`.
+- Reject struct and enum declarations named after built-in types, which used to
+  compile into invalid C (`struct i64`).
+- Reject free functions named after built-ins such as `print`, `len` or
+  `drop`; the built-in won silently and the user function was unreachable.
+- Document that generic impl blocks must repeat their type parameters on the
+  target type, removing a stale contradictory note.
+- Repair the corrupted trait-object seed in the mutation fuzzer; it contained
+  a stray slice expression and bad indentation, so it only exercised parse
+  errors instead of the intended program.
+- **187/187 language tests** (84 run, 81 compile-fail, 10 panic-path, 12
+  multi-file), plus the interface, sanitizer, fuzz and matrix suites.
+
 ## 0.8.14 — lazy boolean operators, ranges and type-layout checks
 
 - `&&` and `||` now really short-circuit. The right operand's temporaries,

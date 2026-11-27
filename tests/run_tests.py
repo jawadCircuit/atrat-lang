@@ -2678,6 +2678,105 @@ fn main() -> i32:
         "lex error",
         "surrogate code point",
     ),
+    (
+        "impl-specialized-target",
+        """
+struct Wrap<T>:
+    value: T
+
+impl Wrap<i64>:
+    fn get(&self) -> i64:
+        return self.value
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "generic type 'Wrap' requires impl type parameters",
+    ),
+    (
+        "impl-specialized-generic-target",
+        """
+struct Wrap<T>:
+    value: T
+
+impl<T> Wrap<i64>:
+    fn get(&self) -> i64:
+        return self.value
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "impl target arguments",
+    ),
+    (
+        "impl-trait-type-args",
+        """
+trait Show:
+    fn show(&self) -> String
+
+struct P:
+    value: i64
+
+impl Show<i64> for P:
+    fn show(&self) -> String:
+        return "p"
+
+fn main() -> i32:
+    return 0
+""",
+        "parse error",
+        "cannot take type arguments",
+    ),
+    (
+        "generic-reserved-primitive",
+        """
+fn id<i64>(x: i64) -> i64:
+    return x
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "shadows the built-in type",
+    ),
+    (
+        "generic-reserved-self",
+        """
+struct S<Self>:
+    value: Self
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "generic parameter 'Self' is reserved",
+    ),
+    (
+        "type-name-reserved",
+        """
+struct i64:
+    value: i64
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "reserved for a built-in type",
+    ),
+    (
+        "builtin-function-name",
+        """
+fn print(x: i64) -> i64:
+    return x
+
+fn main() -> i32:
+    return 0
+""",
+        "type error",
+        "collides with a built-in function",
+    ),
 ]
 
 

@@ -34,8 +34,8 @@ struct H:
 impl Show for H:
     fn show(&self) -> String:
         # Repeated seed insertion can grow a mutated program without bound. Keep
-    # cases small so a pathological parse cannot masquerade as a hang.
-    return s[:16000]elf.n.clone()
+        # cases small so a pathological parse cannot masquerade as a hang.
+        return self.n.clone()
 fn main() -> i32:
     let d: Box<dyn Show> = box(H { n: "x" })
     print(d.show())
