@@ -51,9 +51,17 @@ uses plain quotes, not outer-string escapes: `"v={"x"}"`.
 | `fn(T, ...) -> U` | function pointer type |
 
 Integer and float literals get a fresh constrained type variable and default to
-`i64` / `f64` when unconstrained. A literal integer may flow into any numeric
-type, including a float type (`let x: f64 = 1`). A cast on a bare literal uses
-that default representation (`0 as u8`, `1.5 as i64`).
+`i64` / `f64` when unconstrained. An integer literal that does not fit `i64`
+defaults to `u64`; for example `18446744073709551615` and `0xFFFFFFFFFFFFFFFF`
+are `u64` and may flow into `u64` or `usize`. Integer literals may also flow into
+float types (`let x: f64 = 1`); literals above `i64` max cannot.
+
+Every integer literal must fit its inferred integer type. `let x: u8 = 256` and
+`let x: i8 = 128` are type errors, as is assigning a negative literal to an
+unsigned type (`let x: u32 = -1`). Use an explicit cast for deliberate
+narrowing. The minimum signed literal `-9223372036854775808` is accepted as
+`i64`. A cast on a bare literal uses its default representation (`0 as u8`,
+`1.5 as i64`).
 
 `Copy` types: all primitives, `str`, references, pointers, function pointers,
 and structs/enums whose fields are all `Copy`. Everything else is move-only:

@@ -1633,6 +1633,32 @@ fn main() -> i32:
         "\ufefffn main() -> i32:\n    print(\"ok\")\n    return 0\n",
         "ok" + chr(10),
     ),
+    (
+        "large-integer-literal-u64",
+        """
+fn main() -> i64:
+    let a = 18446744073709551615
+    let b = 0xFFFFFFFFFFFFFFFF
+    let c: usize = 18446744073709551615
+    print(a)
+    print(b)
+    print(c)
+    print(a as i64)
+    return 0
+""",
+        "18446744073709551615" + chr(10) + "18446744073709551615"
+        + chr(10) + "18446744073709551615" + chr(10) + "-1" + chr(10),
+    ),
+    (
+        "min-i64-literal",
+        """
+fn main() -> i64:
+    let x: i64 = -9223372036854775808
+    print(x)
+    return 0
+""",
+        "-9223372036854775808" + chr(10),
+    ),
 ]
 
 FAIL_CASES = [
@@ -2776,6 +2802,36 @@ fn main() -> i32:
 """,
         "type error",
         "collides with a built-in function",
+    ),
+    (
+        "integer-literal-narrow",
+        """
+fn main() -> i32:
+    let x: u8 = 256
+    return 0
+""",
+        "type error",
+        "does not fit `u8`",
+    ),
+    (
+        "integer-literal-too-large-for-i64",
+        """
+fn main() -> i32:
+    let x: i64 = 18446744073709551615
+    return 0
+""",
+        "type error",
+        "does not fit `i64`",
+    ),
+    (
+        "integer-literal-negative-unsigned",
+        """
+fn main() -> i32:
+    let x: u32 = -1
+    return 0
+""",
+        "type error",
+        "cannot negate `u32`",
     ),
 ]
 

@@ -98,7 +98,7 @@ point, and the generated C is available with `atrc emit-c`.
 | Modules / packaging / tooling | **Partial**: cross-file `pub`, qualified module aliases, deterministic module interfaces and a dependency graph; no per-field `pub`, separate compilation or package manager |
 | Production readiness | **No** |
 
-There are **187 end-to-end language tests** covering successful programs, exact
+There are **192 end-to-end language tests** covering successful programs, exact
 stdout, negative diagnostics and multi-file builds, plus a module-interface
 suite that checks stable IDs, deterministic JSON, dependency ordering and cache
 invalidation. The suites are useful, but they are not a proof of correctness, a
@@ -253,7 +253,7 @@ python tests/sanitizers.py   # auto-detects clang/gcc with ASan+UBSan
 
 The suite compiles and executes positive programs, compares exact stdout, and
 asserts that unsafe/invalid programs are rejected with the right diagnostic.
-Currently **187/187** pass, including trait objects, supertraits, owned
+Currently **192/192** pass, including trait objects, supertraits, owned
 `Box<dyn Trait>`, returned views, generic impls, recursive drops, moved closure
 captures, returned getters,
 mutable-alias rejection, multi-file builds, branch moves and uninitialised

@@ -230,6 +230,8 @@ class Unifier:
         if isinstance(t, TVar):
             if t.id in protect:
                 return t
+            if "unsigned" in t.cons:
+                return TCon("u64")
             if "int" in t.cons:
                 return I64
             if "float" in t.cons:
@@ -254,6 +256,11 @@ def _merge_cons(a: frozenset, b: frozenset) -> frozenset | None:
         return a
     if a == b:
         return a
+    if "unsigned" in a or "unsigned" in b:
+        # A literal above i64::MAX can only become u64/usize, never a float.
+        if "float" in a or "float" in b:
+            return None
+        return frozenset({"int", "unsigned"})
     if {"int", "float"} <= (set(a) | set(b)):
         # int literal + float literal -> must be a float type
         return frozenset({"float"})
@@ -261,6 +268,8 @@ def _merge_cons(a: frozenset, b: frozenset) -> frozenset | None:
 
 
 def _con_ok(cons: frozenset, name: str) -> bool:
+    if "unsigned" in cons:
+        return name in ("u64", "usize", "uint")
     if "int" in cons:
         return name in NUM_TYPES
     if "float" in cons:

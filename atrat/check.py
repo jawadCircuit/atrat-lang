@@ -24,6 +24,26 @@ class BorrowError(AtratError):
 
 TYPE_ALIASES = {"int": "i64", "uint": "u64", "float": "f64", "byte": "u8"}
 
+INT_RANGES = {
+    "i8": (-(1 << 7), (1 << 7) - 1),
+    "i16": (-(1 << 15), (1 << 15) - 1),
+    "i32": (-(1 << 31), (1 << 31) - 1),
+    "i64": (-(1 << 63), (1 << 63) - 1),
+    "isize": (-(1 << 63), (1 << 63) - 1),
+    "u8": (0, (1 << 8) - 1),
+    "u16": (0, (1 << 16) - 1),
+    "u32": (0, (1 << 32) - 1),
+    "u64": (0, (1 << 64) - 1),
+    "usize": (0, (1 << 64) - 1),
+}
+
+
+def _int_fits(value: int, name: str) -> bool:
+    name = TYPE_ALIASES.get(name, name)
+    lo, hi = INT_RANGES.get(name, (-(1 << 63), (1 << 63) - 1))
+    return lo <= value <= hi
+
+
 BUILTIN_FNS = {"print", "println", "write", "panic", "assert", "len", "to_str",
                "min", "max", "abs", "sqrt", "exit", "drop",
                "read_file", "write_file", "env", "args", "now_ms", "box", "rc"}
@@ -987,6 +1007,13 @@ class FnChecker:
 
     def assignable(self, expr, got, want, node, ctx=""):
         """Unification plus safe literal coercions (str -> String copies)."""
+        want_t = self.u.resolve_deep(want)
+        if (isinstance(expr, ast.IntLit) and isinstance(want_t, TCon)
+                and want_t.name in INT_TYPES
+                and not _int_fits(expr.value, want_t.name)):
+            self.err(
+                f"integer literal {expr.value} does not fit `{want_t.name}`", node,
+                f"choose a wider integer type or cast the literal explicitly")
         if self.try_coerce(expr, got, want):
             return
         self.unify(got, want, node, ctx)
@@ -1496,6 +1523,8 @@ class FnChecker:
 
     def infer_expr(self, e) -> object:
         if isinstance(e, ast.IntLit):
+            if e.value > (1 << 63) - 1:
+                return self.fresh(hint="u64", cons=frozenset({"int", "unsigned"}))
             return self.fresh(cons=frozenset({"int"}))
         if isinstance(e, ast.FloatLit):
             return self.fresh(cons=frozenset({"float"}))
@@ -1548,6 +1577,13 @@ class FnChecker:
             inner = self.infer_place(e.base)
             return TRef(e.mut, inner)
         if isinstance(e, ast.Unary):
+            if e.op == "-" and isinstance(e.operand, ast.IntLit):
+                e.operand.neg_lit = True
+            # `-9223372036854775808` is the one literal above i64::MAX that
+            # still has a signed i64 value; keep the minimum representable.
+            if (e.op == "-" and isinstance(e.operand, ast.IntLit)
+                    and e.operand.value == 1 << 63):
+                return I64
             operand = self.infer(e.operand)
             if e.op == "-":
                 if not _numeric_like(self.u.resolve_deep(operand)):
@@ -2718,6 +2754,23 @@ def _default_fn_types(m: Module, info: FnInfo, protect: set):
                     seg.expr_ty = m.u.default(seg.expr_ty, protect)
         if getattr(e, "ty", None) is not None:
             e.ty = m.u.default(e.ty, protect)
+        t = getattr(e, "ty", None)
+        if isinstance(e, ast.IntLit) and isinstance(t, TCon) \
+                and t.name in INT_TYPES:
+            value = -e.value if getattr(e, "neg_lit", False) else e.value
+            if not _int_fits(value, t.name):
+                raise TypeError_(
+                    f"integer literal {value} does not fit `{t.name}`",
+                    e.line, e.col,
+                    "choose a wider integer type or cast the literal explicitly")
+        if (isinstance(e, ast.Unary) and e.op == "-"
+                and isinstance(t, TCon)
+                and t.name in ("u8", "u16", "u32", "u64", "usize")):
+            raise TypeError_(
+                f"cannot negate `{t.name}`",
+                e.line, e.col,
+                "unsigned values have no negative representation; use a signed "
+                "type or an explicit cast")
         if isinstance(e, ast.Call) and getattr(e, "param_types", None):
             e.param_types = [m.u.default(p, protect) for p in e.param_types]
         if isinstance(e, ast.Call) and getattr(e, "result_type", None) is not None:

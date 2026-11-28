@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — impl targets and reserved names
+## Unreleased — impl targets, reserved names and integer literals
 
 - Parse type arguments on impl targets instead of silently discarding them.
   Specialized impls such as `impl Wrap<i64>` and `impl<T> Wrap<i64>` are now
@@ -19,7 +19,15 @@
 - Repair the corrupted trait-object seed in the mutation fuzzer; it contained
   a stray slice expression and bad indentation, so it only exercised parse
   errors instead of the intended program.
-- **187/187 language tests** (84 run, 81 compile-fail, 10 panic-path, 12
+- Integer literals above `i64` max now default to `u64` instead of wrapping.
+  `18446744073709551615` and `0xFFFFFFFFFFFFFFFF` print as themselves; they can
+  still be narrowed with an explicit cast.
+- Reject integer literals outside the range of their inferred type, including
+  narrow annotations (`let x: u8 = 256`) and negative literals assigned to
+  unsigned types (`let x: u32 = -1`). Previously these silently truncated.
+- Document the literal defaulting and range rules, including the signed minimum
+  literal `-9223372036854775808`.
+- **192/192 language tests** (86 run, 84 compile-fail, 10 panic-path, 12
   multi-file), plus the interface, sanitizer, fuzz and matrix suites.
 
 ## 0.8.14 — lazy boolean operators, ranges and type-layout checks
